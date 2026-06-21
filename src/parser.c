@@ -384,9 +384,87 @@ static void parse_primary(Parser *p) {
             Type *ty = parse_type_spec(p);
             while (peek(p).kind == TK_STAR) { next(p); ty = pointer_to(ty); }
             expect(p, TK_RPAREN);
-            parse_unary(p);
-            p->expr_type = ty;
-            p->has_lvalue = 0;
+            // Check for compound literal: (Type){...}
+            if (peek(p).kind == TK_LBRACE) {
+                // Parse compound literal
+                next(p); // consume {
+                // Allocate space on stack for the compound literal
+                int align = ty->align;
+                if (align < 1) align = 1;
+                p->local_offset = ((p->local_offset + align - 1) / align) * align + ty->size;
+                int offset = p->local_offset;
+                // Parse initializer list
+                int field_idx = 0;
+                int elem_offset = 0;
+                while (peek(p).kind != TK_RBRACE) {
+                    if (peek(p).kind == TK_DOT) {
+                        // Named field initializer: .field = value
+                        next(p);
+                        Token field_name = expect(p, TK_IDENT);
+                        expect(p, TK_ASSIGN);
+                        parse_assign(p);
+                        char *fname = tok_str(&field_name);
+                        Member *f = find_field(ty, fname);
+                        free(fname);
+                        if (f) {
+                            OpSize sz = type_opsize(f->type);
+                            Operand src;
+                            if (sz == SZ_BYTE) src = op_reg(REG_RAX, SZ_BYTE);
+                            else if (sz == SZ_WORD) src = op_reg(REG_RAX, SZ_WORD);
+                            else if (sz == SZ_DWORD) src = op_reg(REG_RAX, SZ_DWORD);
+                            else src = op_reg(REG_RAX, SZ_QWORD);
+                            emit_mov(p->gen, op_mem(REG_RBP, -(offset - f->offset), sz), src);
+                        }
+                    } else {
+                        // Positional initializer
+                        parse_assign(p);
+                        if (ty->kind == TY_STRUCT || ty->kind == TY_UNION) {
+                            if (field_idx < ty->member_count) {
+                                Member *f = &ty->members[field_idx];
+                                OpSize sz = type_opsize(f->type);
+                                Operand src;
+                                if (sz == SZ_BYTE) src = op_reg(REG_RAX, SZ_BYTE);
+                                else if (sz == SZ_WORD) src = op_reg(REG_RAX, SZ_WORD);
+                                else if (sz == SZ_DWORD) src = op_reg(REG_RAX, SZ_DWORD);
+                                else src = op_reg(REG_RAX, SZ_QWORD);
+                                emit_mov(p->gen, op_mem(REG_RBP, -(offset - f->offset), sz), src);
+                            }
+                        } else if (ty->kind == TY_ARRAY) {
+                            OpSize sz = type_opsize(ty->base);
+                            Operand src;
+                            if (sz == SZ_BYTE) src = op_reg(REG_RAX, SZ_BYTE);
+                            else if (sz == SZ_WORD) src = op_reg(REG_RAX, SZ_WORD);
+                            else if (sz == SZ_DWORD) src = op_reg(REG_RAX, SZ_DWORD);
+                            else src = op_reg(REG_RAX, SZ_QWORD);
+                            emit_mov(p->gen, op_mem(REG_RBP, -(offset - elem_offset), sz), src);
+                            elem_offset += ty->base->size;
+                        } else {
+                            OpSize sz = type_opsize(ty);
+                            Operand src;
+                            if (sz == SZ_BYTE) src = op_reg(REG_RAX, SZ_BYTE);
+                            else if (sz == SZ_WORD) src = op_reg(REG_RAX, SZ_WORD);
+                            else if (sz == SZ_DWORD) src = op_reg(REG_RAX, SZ_DWORD);
+                            else src = op_reg(REG_RAX, SZ_QWORD);
+                            emit_mov(p->gen, op_mem(REG_RBP, -offset, sz), src);
+                        }
+                        field_idx++;
+                    }
+                    if (peek(p).kind == TK_COMMA) next(p);
+                }
+                expect(p, TK_RBRACE);
+                // Load address of the compound literal
+                emit_lea(p->gen, op_reg(REG_RAX, SZ_QWORD), op_mem(REG_RBP, -offset, SZ_QWORD));
+                p->expr_type = ty;
+                p->has_lvalue = 1;
+                p->lvalue_is_stack = 1;
+                p->lvalue_offset = offset;
+                p->lvalue_type = ty;
+            } else {
+                // Regular cast expression
+                parse_unary(p);
+                p->expr_type = ty;
+                p->has_lvalue = 0;
+            }
         } else {
             parse_expr(p);
             expect(p, TK_RPAREN);
@@ -542,9 +620,84 @@ static void parse_cast(Parser *p) {
             Type *ty = parse_type_spec(p);
             while (peek(p).kind == TK_STAR) { next(p); ty = pointer_to(ty); }
             expect(p, TK_RPAREN);
-            parse_unary(p);
-            p->expr_type = ty;
-            p->has_lvalue = 0;
+            // Check for compound literal: (Type){...}
+            if (peek(p).kind == TK_LBRACE) {
+                next(p); // consume {
+                // Allocate space on stack for the compound literal
+                int align = ty->align;
+                if (align < 1) align = 1;
+                p->local_offset = ((p->local_offset + align - 1) / align) * align + ty->size;
+                int offset = p->local_offset;
+                // Parse initializer list
+                int field_idx = 0;
+                int elem_offset = 0;
+                while (peek(p).kind != TK_RBRACE) {
+                    if (peek(p).kind == TK_DOT) {
+                        next(p);
+                        Token field_name = expect(p, TK_IDENT);
+                        expect(p, TK_ASSIGN);
+                        parse_assign(p);
+                        char *fname = tok_str(&field_name);
+                        Member *f = find_field(ty, fname);
+                        free(fname);
+                        if (f) {
+                            OpSize sz = type_opsize(f->type);
+                            Operand src;
+                            if (sz == SZ_BYTE) src = op_reg(REG_RAX, SZ_BYTE);
+                            else if (sz == SZ_WORD) src = op_reg(REG_RAX, SZ_WORD);
+                            else if (sz == SZ_DWORD) src = op_reg(REG_RAX, SZ_DWORD);
+                            else src = op_reg(REG_RAX, SZ_QWORD);
+                            emit_mov(p->gen, op_mem(REG_RBP, -(offset - f->offset), sz), src);
+                        }
+                    } else {
+                        parse_assign(p);
+                        if (ty->kind == TY_STRUCT || ty->kind == TY_UNION) {
+                            if (field_idx < ty->member_count) {
+                                Member *f = &ty->members[field_idx];
+                                OpSize sz = type_opsize(f->type);
+                                Operand src;
+                                if (sz == SZ_BYTE) src = op_reg(REG_RAX, SZ_BYTE);
+                                else if (sz == SZ_WORD) src = op_reg(REG_RAX, SZ_WORD);
+                                else if (sz == SZ_DWORD) src = op_reg(REG_RAX, SZ_DWORD);
+                                else src = op_reg(REG_RAX, SZ_QWORD);
+                                emit_mov(p->gen, op_mem(REG_RBP, -(offset - f->offset), sz), src);
+                            }
+                        } else if (ty->kind == TY_ARRAY) {
+                            OpSize sz = type_opsize(ty->base);
+                            Operand src;
+                            if (sz == SZ_BYTE) src = op_reg(REG_RAX, SZ_BYTE);
+                            else if (sz == SZ_WORD) src = op_reg(REG_RAX, SZ_WORD);
+                            else if (sz == SZ_DWORD) src = op_reg(REG_RAX, SZ_DWORD);
+                            else src = op_reg(REG_RAX, SZ_QWORD);
+                            emit_mov(p->gen, op_mem(REG_RBP, -(offset - elem_offset), sz), src);
+                            elem_offset += ty->base->size;
+                        } else {
+                            OpSize sz = type_opsize(ty);
+                            Operand src;
+                            if (sz == SZ_BYTE) src = op_reg(REG_RAX, SZ_BYTE);
+                            else if (sz == SZ_WORD) src = op_reg(REG_RAX, SZ_WORD);
+                            else if (sz == SZ_DWORD) src = op_reg(REG_RAX, SZ_DWORD);
+                            else src = op_reg(REG_RAX, SZ_QWORD);
+                            emit_mov(p->gen, op_mem(REG_RBP, -offset, sz), src);
+                        }
+                        field_idx++;
+                    }
+                    if (peek(p).kind == TK_COMMA) next(p);
+                }
+                expect(p, TK_RBRACE);
+                // For initialization, the values are already on the stack
+                // Return the type info but mark as stack-based lvalue
+                p->expr_type = ty;
+                p->has_lvalue = 1;
+                p->lvalue_is_stack = 1;
+                p->lvalue_offset = offset;
+                p->lvalue_type = ty;
+            } else {
+                // Regular cast expression
+                parse_unary(p);
+                p->expr_type = ty;
+                p->has_lvalue = 0;
+            }
             return;
         }
         p->lexer = saved;
@@ -953,16 +1106,44 @@ static void parse_var_decl(Parser *p, Type *base_type) {
     p->local_offset = ((p->local_offset + align - 1) / align) * align + ty->size;
     Symbol *s = sym_declare(xstrdup(name_str), SYM_VAR, ty);
     s->offset = p->local_offset;
+    int var_offset = p->local_offset;  // Save variable's offset
     if (peek(p).kind == TK_ASSIGN) {
         next(p);
         parse_expr(p);
-        OpSize sz = type_opsize(ty);
-        Operand src;
-        if (sz == SZ_BYTE) src = op_reg(REG_RAX, SZ_BYTE);
-        else if (sz == SZ_WORD) src = op_reg(REG_RAX, SZ_WORD);
-        else if (sz == SZ_DWORD) src = op_reg(REG_RAX, SZ_DWORD);
-        else src = op_reg(REG_RAX, SZ_QWORD);
-        emit_mov(p->gen, op_mem(REG_RBP, -(p->local_offset), sz), src);
+        // Handle struct/union assignment by copying
+        if (p->has_lvalue && p->lvalue_is_stack && 
+            (ty->kind == TY_STRUCT || ty->kind == TY_UNION)) {
+            // Copy struct from source to destination
+            int src_offset = p->lvalue_offset;
+            int dst_offset = var_offset;
+            int size = ty->size;
+            // Copy in 8-byte chunks
+            for (int i = 0; i < size; i += 8) {
+                int chunk = size - i;
+                if (chunk > 8) chunk = 8;
+                if (chunk == 8) {
+                    emit_mov(p->gen, op_reg(REG_R10, SZ_QWORD), op_mem(REG_RBP, -(src_offset - i), SZ_QWORD));
+                    emit_mov(p->gen, op_mem(REG_RBP, -(dst_offset - i), SZ_QWORD), op_reg(REG_R10, SZ_QWORD));
+                } else if (chunk == 4) {
+                    emit_mov(p->gen, op_reg(REG_R10, SZ_DWORD), op_mem(REG_RBP, -(src_offset - i), SZ_DWORD));
+                    emit_mov(p->gen, op_mem(REG_RBP, -(dst_offset - i), SZ_DWORD), op_reg(REG_R10, SZ_DWORD));
+                } else if (chunk == 2) {
+                    emit_mov(p->gen, op_reg(REG_R10, SZ_WORD), op_mem(REG_RBP, -(src_offset - i), SZ_WORD));
+                    emit_mov(p->gen, op_mem(REG_RBP, -(dst_offset - i), SZ_WORD), op_reg(REG_R10, SZ_WORD));
+                } else {
+                    emit_mov(p->gen, op_reg(REG_R10, SZ_BYTE), op_mem(REG_RBP, -(src_offset - i), SZ_BYTE));
+                    emit_mov(p->gen, op_mem(REG_RBP, -(dst_offset - i), SZ_BYTE), op_reg(REG_R10, SZ_BYTE));
+                }
+            }
+        } else {
+            OpSize sz = type_opsize(ty);
+            Operand src;
+            if (sz == SZ_BYTE) src = op_reg(REG_RAX, SZ_BYTE);
+            else if (sz == SZ_WORD) src = op_reg(REG_RAX, SZ_WORD);
+            else if (sz == SZ_DWORD) src = op_reg(REG_RAX, SZ_DWORD);
+            else src = op_reg(REG_RAX, SZ_QWORD);
+            emit_mov(p->gen, op_mem(REG_RBP, -(var_offset), sz), src);
+        }
     }
     free(name_str);
 }
