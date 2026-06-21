@@ -60,7 +60,7 @@ void lexer_init(Lexer *l, char *source) {
     l->start = source;
     l->current = source;
     l->line = 1;
-    l->token = (Token){TK_EOF, NULL, 0, 0, 0, NULL, 0};
+    l->token = (Token){TK_EOF, NULL, 0, 0, 0, NULL, 0, 1};
 }
 
 static void skip_whitespace(Lexer *l) {
@@ -202,19 +202,21 @@ Token lexer_next(Lexer *l) {
 
     l->start = l->current;
     char c = *l->current;
+    int line = l->line;
 
     if (c == '\0') {
-        l->token = (Token){TK_EOF, l->current, 0, 0, 0, NULL, 0};
+        l->token = (Token){TK_EOF, l->current, 0, 0, 0, NULL, 0, line};
         return l->token;
     }
 
-    if (is_alpha(c)) { l->token = read_ident(l); return l->token; }
-    if (is_digit(c)) { l->token = read_number(l); return l->token; }
-    if (c == '"') { l->token = read_string(l); return l->token; }
-    if (c == '\'') { l->token = read_char(l); return l->token; }
+    if (is_alpha(c)) { l->token = read_ident(l); l->token.line = line; return l->token; }
+    if (is_digit(c)) { l->token = read_number(l); l->token.line = line; return l->token; }
+    if (c == '"') { l->token = read_string(l); l->token.line = line; return l->token; }
+    if (c == '\'') { l->token = read_char(l); l->token.line = line; return l->token; }
 
     Token tok;
     tok.start = l->start;
+    tok.line = line;
 
     #define THREE(c1, c2, c3, k) \
         if (*l->current == c1 && l->current[1] == c2 && l->current[2] == c3) { \

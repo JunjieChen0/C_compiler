@@ -17,6 +17,7 @@ void *xrealloc(void *ptr, size_t size);
 char *xstrdup(const char *s);
 void error(const char *fmt, ...);
 void error_at(const char *loc, const char *fmt, ...);
+void error_at_line(int line, const char *fmt, ...);
 void set_current_file(const char *file);
 void set_current_input(const char *input);
 String string_new(const char *s);

@@ -83,6 +83,7 @@ typedef struct {
     double fval;        // for TK_FLOAT
     char *sval;         // for TK_STRING (escaped)
     int slen;           // string length
+    int line;           // line number
 } Token;
 
 typedef struct {

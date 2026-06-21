@@ -70,6 +70,17 @@ void error_at(const char *loc, const char *fmt, ...) {
     exit(1);
 }
 
+void error_at_line(int line, const char *fmt, ...) {
+    fprintf(stderr, "%s:%d: ", current_file ? current_file : "<input>", line);
+
+    va_list ap;
+    va_start(ap, fmt);
+    vfprintf(stderr, fmt, ap);
+    va_end(ap);
+    fprintf(stderr, "\n");
+    exit(1);
+}
+
 String string_new(const char *s) {
     String str;
     str.data = xstrdup(s);
