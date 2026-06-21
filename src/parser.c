@@ -1048,6 +1048,50 @@ static void parse_statement(Parser *p) {
         expect(p, TK_SEMICOLON);
         if (p->continue_label < 0) error_at(t.start, "continue outside loop");
         emit_jmp_id(p, p->continue_label);
+    } else if (t.kind == TK_SWITCH) {
+        next(p);
+        expect(p, TK_LPAREN);
+        parse_expr(p);
+        expect(p, TK_RPAREN);
+        int end_label = next_label(p);
+        int saved_break = p->break_label;
+        p->break_label = end_label;
+        // Save switch expression value
+        emit_push(p->gen, op_reg(REG_RAX, SZ_QWORD));
+        // Parse switch body
+        expect(p, TK_LBRACE);
+        scope_push();
+        while (peek(p).kind != TK_RBRACE && peek(p).kind != TK_EOF) {
+            if (peek(p).kind == TK_CASE) {
+                next(p);
+                parse_expr(p);
+                expect(p, TK_COLON);
+                emit_pop(p->gen, op_reg(REG_R10, SZ_QWORD));
+                emit_push(p->gen, op_reg(REG_R10, SZ_QWORD));
+                emit_cmp(p->gen, op_reg(REG_R10, SZ_QWORD), op_reg(REG_RAX, SZ_QWORD));
+                int next_case = next_label(p);
+                emit_jne_id(p, next_case);
+                // Parse case body
+                while (peek(p).kind != TK_CASE && peek(p).kind != TK_DEFAULT && 
+                       peek(p).kind != TK_RBRACE && peek(p).kind != TK_EOF) {
+                    parse_statement(p);
+                }
+                emit_label_id(p, next_case);
+            } else if (peek(p).kind == TK_DEFAULT) {
+                next(p);
+                expect(p, TK_COLON);
+                // Parse default body
+                while (peek(p).kind != TK_RBRACE && peek(p).kind != TK_EOF) {
+                    parse_statement(p);
+                }
+            } else {
+                parse_statement(p);
+            }
+        }
+        scope_pop();
+        expect(p, TK_RBRACE);
+        emit_label_id(p, end_label);
+        p->break_label = saved_break;
     } else if (t.kind == TK_SEMICOLON) {
         next(p);
     } else if (is_type_start(p) || t.kind == TK_STATIC || t.kind == TK_EXTERN) {

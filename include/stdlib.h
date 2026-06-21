@@ -15,7 +15,7 @@ void free(void *ptr);
 
 void abort(void);
 void exit(int status);
-int atexit(void (*func)(void));
+// int atexit(void (*func)(void));  // Function pointer not supported yet
 
 int system(const char *command);
 char *getenv(const char *name);
@@ -34,10 +34,10 @@ unsigned long long strtoull(const char *nptr, char **endptr, int base);
 double strtod(const char *nptr, char **endptr);
 float strtof(const char *nptr, char **endptr);
 
-void *bsearch(const void *key, const void *base, size_t nmemb, size_t size,
-              int (*compar)(const void *, const void *));
-void qsort(void *base, size_t nmemb, size_t size,
-           int (*compar)(const void *, const void *));
+// void *bsearch(const void *key, const void *base, size_t nmemb, size_t size,
+//               int (*compar)(const void *, const void *));
+// void qsort(void *base, size_t nmemb, size_t size,
+//            int (*compar)(const void *, const void *));
 
 int rand(void);
 void srand(unsigned int seed);
