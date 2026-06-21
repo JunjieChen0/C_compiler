@@ -1,0 +1,8 @@
+# Compiled binaries
+*.exe
+*.o
+*.obj
+*.s
+
+# Keep test assembly files
+!tests/programs/*.s
