@@ -334,6 +334,9 @@ static void parse_postfix(Parser *p) {
     for (;;) {
         Token t = peek(p);
         if (t.kind == TK_LPAREN) {
+            // Save function name before parsing arguments
+            char func_name[256];
+            snprintf(func_name, sizeof(func_name), "%s", p->last_ident);
             next(p);
             int nargs = 0;
             if (peek(p).kind != TK_RPAREN) {
@@ -347,7 +350,7 @@ static void parse_postfix(Parser *p) {
             static const Register arg_regs2[] = {REG_RCX, REG_RDX, REG_R8, REG_R9};
             for (int i = (nargs < 6 ? nargs : 6) - 1; i >= 0; i--)
                 emit_pop(p->gen, op_reg(arg_regs2[i], SZ_QWORD));
-            emit_call(p->gen, p->last_ident);
+            emit_call(p->gen, func_name);
             if (nargs > 6)
                 emit_sub(p->gen, op_reg(REG_RSP, SZ_QWORD), op_imm((nargs - 6) * 8));
             p->has_lvalue = 0;

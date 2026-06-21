@@ -23,6 +23,10 @@ The compiler can compile a subset of C programs to x86-64 NASM assembly. It has 
 | `func_macro.c` | Function-like macros | Yes | Yes |
 | `struct_test.c` | Struct definitions | Yes | Yes |
 | `struct_expr.c` | Struct expressions | Yes | Yes |
+| `typedef_test.c` | Typedef | Yes | Yes |
+| `ulong_test.c` | Unsigned long | Yes | Yes |
+| `ull_test.c` | Unsigned long long | Yes | Yes |
+| `advanced_test.c` | Advanced features | Yes | Yes |
 
 ### Unit Tests (all pass)
 
@@ -80,7 +84,7 @@ The compiler can compile a subset of C programs to x86-64 NASM assembly. It has 
 5. **Multiple storage classes**: `static`, `extern` not fully implemented
 6. **Bit fields**: `struct { int x : 4; }` not supported
 7. **Flexible array members**: `struct { int n; int data[]; }` not supported
-8. **Anonymous structs/unions**: `struct { struct { int x; }; }` not supported
+8. **Anonymous structs/unions**: Supported in typedefs
 
 ## Conclusion
 
