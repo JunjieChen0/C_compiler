@@ -27,6 +27,7 @@ The compiler can compile a subset of C programs to x86-64 NASM assembly. It has 
 | `ulong_test.c` | Unsigned long | Yes | Yes |
 | `ull_test.c` | Unsigned long long | Yes | Yes |
 | `advanced_test.c` | Advanced features | Yes | Yes |
+| `recursion_test.c` | Recursion | Yes | Yes |
 
 ### Unit Tests (all pass)
 
