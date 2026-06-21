@@ -291,11 +291,24 @@ static void parse_primary(Parser *p) {
         p->has_lvalue = 0;
         break;
     case TK_STRING: {
+        // Handle string literal concatenation
+        char *str_data = t.sval;
+        int str_len = t.slen;
+        while (peek(p).kind == TK_STRING) {
+            Token next_str = next(p);
+            // Concatenate strings
+            char *new_data = xmalloc(str_len + next_str.slen);
+            memcpy(new_data, str_data, str_len);
+            memcpy(new_data + str_len, next_str.sval, next_str.slen);
+            if (str_data != t.sval) free(str_data);
+            str_data = new_data;
+            str_len += next_str.slen;
+        }
         int id = p->string_count++;
         p->strings[id].label = xmalloc(32);
         snprintf(p->strings[id].label, 32, ".LC%d", id);
-        p->strings[id].data = t.sval;
-        p->strings[id].len = t.slen;
+        p->strings[id].data = str_data;
+        p->strings[id].len = str_len;
         emit_mov(p->gen, op_reg(REG_RAX, SZ_QWORD), op_label(p->strings[id].label));
         p->expr_type = pointer_to(ty_char());
         p->has_lvalue = 0;
