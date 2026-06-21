@@ -222,7 +222,10 @@ static Type *parse_type_spec(Parser *p) {
             int max_align = 1;
             while (peek(p).kind != TK_RBRACE) {
                 Type *field_type = parse_type_spec(p);
+                // Handle pointer types before field name
+                while (peek(p).kind == TK_STAR) { next(p); field_type = pointer_to(field_type); }
                 Token field_name = expect(p, TK_IDENT);
+                // Handle pointer types after field name (for declarations like int *p)
                 while (peek(p).kind == TK_STAR) { next(p); field_type = pointer_to(field_type); }
                 if (peek(p).kind == TK_LBRACKET) {
                     next(p);

@@ -78,10 +78,9 @@ The compiler can compile a subset of C programs to x86-64 NASM assembly. It has 
 - ✅ Uses RBP-relative addressing for stack-based structs
 
 ### Missing Features for Self-Hosting
-1. **Line number tracking**: Error messages don't show correct line numbers
-2. **Bit fields**: `struct { int x : 4; }` not supported
-3. **Flexible array members**: `struct { int n; int data[]; }` not supported
-4. **Anonymous structs/unions**: Supported in typedefs
+1. **Bit fields**: `struct { int x : 4; }` not supported
+2. **Flexible array members**: `struct { int n; int data[]; }` not supported
+3. **Anonymous structs/unions**: Supported in typedefs
 
 ## Conclusion
 
