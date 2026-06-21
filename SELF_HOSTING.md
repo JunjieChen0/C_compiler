@@ -21,7 +21,8 @@ The compiler can compile a subset of C programs to x86-64 NASM assembly. It has 
 | `bitwise.c` | Bitwise operations | Yes | Yes (exit 95) |
 | `string_ops.c` | Simple arithmetic | Yes | Yes (exit 58) |
 | `func_macro.c` | Function-like macros | Yes | Yes |
-| `struct_test.c` | Struct definitions | Yes | Partial |
+| `struct_test.c` | Struct definitions | Yes | Yes |
+| `struct_expr.c` | Struct expressions | Yes | Yes |
 
 ### Unit Tests (all pass)
 
@@ -67,9 +68,9 @@ The compiler can compile a subset of C programs to x86-64 NASM assembly. It has 
 ## Known Limitations
 
 ### Struct Field Access
-- `p.x = 10;` works correctly (assignment)
-- `p.x + p.y` has stack balance issues in expressions
-- Need to refactor to properly handle lvalue/rvalue contexts
+- ✅ `p.x = 10;` works correctly (assignment)
+- ✅ `p.x + p.y` works correctly (expressions)
+- ✅ Uses RBP-relative addressing for stack-based structs
 
 ### Missing Features for Self-Hosting
 1. **Variadic function calls**: `va_start`, `va_arg`, `va_end` not fully implemented

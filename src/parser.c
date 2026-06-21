@@ -180,9 +180,9 @@ static Type *parse_type_spec(Parser *p) {
         if (peek(p).kind == TK_INT_KW) next(p);
         return is_unsigned ? ty_ushort() : ty_short();
     }
-    if (t.kind == TK_LONG) {
+    if (t.kind == TK_LONG_KW) {
         next(p);
-        if (peek(p).kind == TK_LONG) {
+        if (peek(p).kind == TK_LONG_KW) {
             next(p);
             if (peek(p).kind == TK_INT_KW) next(p);
             return is_unsigned ? ty_ullong() : ty_llong();
@@ -196,17 +196,26 @@ static Type *parse_type_spec(Parser *p) {
     if (t.kind == TK_BOOL) { next(p); return ty_bool(); }
     if (t.kind == TK_STRUCT || t.kind == TK_UNION) {
         next(p);
-        Token name = expect(p, TK_IDENT);
-        char *s = tok_str(&name);
-        // Look up existing struct type
+        char *s = NULL;
         Type *ty = NULL;
-        Symbol *tag = sym_find(s);
-        if (tag && tag->kind == SYM_TAG) {
-            ty = tag->type;
+        
+        // Check if there's a struct name
+        if (peek(p).kind == TK_IDENT) {
+            Token name = next(p);
+            s = tok_str(&name);
+            // Look up existing struct type
+            Symbol *tag = sym_find(s);
+            if (tag && tag->kind == SYM_TAG) {
+                ty = tag->type;
+            } else {
+                ty = (t.kind == TK_STRUCT) ? ty_struct(s) : ty_union(s);
+                sym_declare(xstrdup(s), SYM_TAG, ty);
+            }
         } else {
-            ty = (t.kind == TK_STRUCT) ? ty_struct(s) : ty_union(s);
-            sym_declare(xstrdup(s), SYM_TAG, ty);
+            // Anonymous struct
+            ty = (t.kind == TK_STRUCT) ? ty_struct(NULL) : ty_union(NULL);
         }
+        
         if (peek(p).kind == TK_LBRACE) {
             next(p);
             int offset = 0;
@@ -1155,7 +1164,60 @@ void parse_translation_unit(Parser *p) {
         Token name = expect(p, TK_IDENT);
         char *name_str = tok_str(&name);
         if (peek(p).kind == TK_LPAREN) {
-            parse_func(p, ty, name_str);
+            // Check if this is a function prototype (no body)
+            Lexer saved = p->lexer;
+            next(p); // consume (
+            // Parse parameter list
+            int is_proto = 0;
+            if (peek(p).kind == TK_RPAREN) {
+                next(p); // consume )
+                if (peek(p).kind == TK_SEMICOLON) {
+                    is_proto = 1;
+                }
+            } else {
+                // Skip through parameter list
+                int depth = 1;
+                while (depth > 0 && peek(p).kind != TK_EOF) {
+                    if (peek(p).kind == TK_LPAREN) depth++;
+                    else if (peek(p).kind == TK_RPAREN) {
+                        depth--;
+                        if (depth == 0) {
+                            next(p); // consume )
+                            if (peek(p).kind == TK_SEMICOLON) {
+                                is_proto = 1;
+                            }
+                            break;
+                        }
+                    }
+                    next(p);
+                }
+            }
+            p->lexer = saved;
+            
+            if (is_proto) {
+                // Function prototype - just declare the symbol
+                next(p); // consume (
+                Type **param_types = NULL;
+                int param_count = 0;
+                int is_variadic = 0;
+                if (peek(p).kind != TK_RPAREN) {
+                    do {
+                        if (peek(p).kind == TK_ELLIPSIS) { next(p); is_variadic = 1; break; }
+                        Type *pty = parse_type_spec(p);
+                        while (peek(p).kind == TK_STAR) { next(p); pty = pointer_to(pty); }
+                        if (peek(p).kind == TK_IDENT) next(p); // skip param name
+                        param_types = xrealloc(param_types, sizeof(Type*) * (param_count + 1));
+                        param_types[param_count++] = pty;
+                    } while (peek(p).kind == TK_COMMA && (next(p), 1));
+                }
+                expect(p, TK_RPAREN);
+                Type *func_type = ty_func(ty, param_types, param_count, is_variadic);
+                sym_declare(xstrdup(name_str), SYM_FUNC, func_type);
+                expect(p, TK_SEMICOLON);
+                free(name_str);
+            } else {
+                parse_func(p, ty, name_str);
+            }
         } else {
             sym_declare(xstrdup(name_str), SYM_VAR, ty);
             if (peek(p).kind == TK_ASSIGN) next(p);

@@ -2,6 +2,7 @@
 #define _STDIO_H
 
 #include "stddef.h"
+#include "stdarg.h"
 
 typedef struct _FILE FILE;
 
