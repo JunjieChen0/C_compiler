@@ -298,8 +298,17 @@ static Type *parse_type_spec(Parser *p) {
                 Token name = expect(p, TK_IDENT);
                 if (peek(p).kind == TK_ASSIGN) {
                     next(p);
+                    // Handle negative values
+                    int neg = 0;
+                    if (peek(p).kind == TK_MINUS) {
+                        neg = 1;
+                        next(p);
+                    } else if (peek(p).kind == TK_PLUS) {
+                        next(p);
+                    }
                     Token t2 = expect(p, TK_INT);
                     val = (int)t2.ival;
+                    if (neg) val = -val;
                 }
                 sym_declare_enum(tok_str(&name), val);
                 val++;
