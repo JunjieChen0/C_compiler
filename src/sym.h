@@ -38,6 +38,7 @@ void scope_reset(void);
 
 Symbol *sym_declare(char *name, SymbolKind kind, Type *type);
 Symbol *sym_declare_enum(char *name, int val);
+Symbol *sym_declare_typedef(char *name, Type *type);
 Symbol *sym_find(char *name);
 Symbol *sym_find_current(char *name);
 Symbol *sym_find_global(char *name);

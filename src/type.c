@@ -73,6 +73,24 @@ Type *ty_func(Type *return_type, Type **params, int param_count, int is_variadic
     return ty;
 }
 
+void add_field(Type *struc, char *name, Type *type, int offset) {
+    struc->members = xrealloc(struc->members, sizeof(Member) * (struc->member_count + 1));
+    Member *m = &struc->members[struc->member_count++];
+    m->name = name;
+    m->type = type;
+    m->offset = offset;
+}
+
+Member *find_field(Type *struc, char *name) {
+    if (!struc || !struc->members) return NULL;
+    for (int i = 0; i < struc->member_count; i++) {
+        if (strcmp(struc->members[i].name, name) == 0) {
+            return &struc->members[i];
+        }
+    }
+    return NULL;
+}
+
 int type_size(Type *ty) { return ty->size; }
 int type_align(Type *ty) { return ty->align; }
 

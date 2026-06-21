@@ -82,6 +82,14 @@ Symbol *sym_declare_enum(char *name, int val) {
     return sym;
 }
 
+Symbol *sym_declare_typedef(char *name, Type *type) {
+    if (!current_scope)
+        error("sym_declare_typedef: no active scope");
+    Symbol *sym = new_symbol(SYM_TYPEDEF, name, type);
+    scope_insert(current_scope, sym);
+    return sym;
+}
+
 Symbol *sym_find(char *name) {
     for (Scope *sc = current_scope; sc; sc = sc->parent) {
         Symbol *s = scope_lookup(sc, name);

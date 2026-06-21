@@ -4,6 +4,7 @@ global factorial
 factorial:
   push    rbp
   mov     rbp, rsp
+  mov     qword [rbp-8], rcx
   sub     rsp, 16
   mov     rax, 1
   mov     dword [rbp-12], eax
@@ -49,7 +50,7 @@ main:
   sub     rsp, 16
   mov     rax, 5
   push    rax
-  pop     rdi
+  pop     rcx
   call    factorial
   mov     dword [rbp-4], eax
   mov     eax, dword [rbp-4]

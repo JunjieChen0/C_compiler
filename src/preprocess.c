@@ -9,10 +9,15 @@
 
 typedef struct Macro Macro;
 
+#define MAX_MACRO_PARAMS 32
+
 struct Macro {
     char *name;
     char *body;
     int is_builtin;
+    int is_func_like;
+    char *params[MAX_MACRO_PARAMS];
+    int num_params;
     Macro *next;
 };
 
@@ -30,18 +35,55 @@ static void define_macro(const char *name, const char *body, int is_builtin) {
         }
     }
     Macro *m = xmalloc(sizeof(Macro));
+    memset(m, 0, sizeof(Macro));
     m->name = xstrdup(name);
     m->body = xstrdup(body);
     m->is_builtin = is_builtin;
+    m->is_func_like = 0;
+    m->num_params = 0;
     m->next = macros;
     macros = m;
 }
 
-static const char *find_macro(const char *name) {
+static void define_func_macro(const char *name, const char *params[], int num_params, const char *body, int is_builtin) {
     for (Macro *m = macros; m; m = m->next) {
-        if (strcmp(m->name, name) == 0) return m->body;
+        if (strcmp(m->name, name) == 0) {
+            if (!m->is_builtin) {
+                free(m->body);
+                m->body = xstrdup(body);
+                m->is_func_like = 1;
+                m->num_params = num_params;
+                for (int i = 0; i < num_params; i++) {
+                    m->params[i] = xstrdup(params[i]);
+                }
+            }
+            return;
+        }
+    }
+    Macro *m = xmalloc(sizeof(Macro));
+    memset(m, 0, sizeof(Macro));
+    m->name = xstrdup(name);
+    m->body = xstrdup(body);
+    m->is_builtin = is_builtin;
+    m->is_func_like = 1;
+    m->num_params = num_params;
+    for (int i = 0; i < num_params; i++) {
+        m->params[i] = xstrdup(params[i]);
+    }
+    m->next = macros;
+    macros = m;
+}
+
+static Macro *find_macro_entry(const char *name) {
+    for (Macro *m = macros; m; m = m->next) {
+        if (strcmp(m->name, name) == 0) return m;
     }
     return NULL;
+}
+
+static const char *find_macro(const char *name) {
+    Macro *m = find_macro_entry(name);
+    return m ? m->body : NULL;
 }
 
 static int is_alpha(char c) {
@@ -226,8 +268,36 @@ static char *preprocess_internal(char *source, int depth) {
                 read_ident(&p, name);
 
                 if (*p == '(') {
-                    skip_to_eol(&p);
+                    p++;
+                    char *params[MAX_MACRO_PARAMS];
+                    int num_params = 0;
+                    skip_whitespace(&p);
+                    if (*p != ')') {
+                        do {
+                            skip_whitespace(&p);
+                            char param[MAX_NAME];
+                            read_ident(&p, param);
+                            if (strlen(param) > 0) {
+                                params[num_params++] = xstrdup(param);
+                            }
+                            skip_whitespace(&p);
+                        } while (*p == ',' && (p++, 1));
+                    }
+                    if (*p == ')') p++;
+
+                    skip_whitespace(&p);
+                    char body[MAX_MACRO_BODY];
+                    int bi = 0;
+                    while (*p && *p != '\n' && bi < MAX_MACRO_BODY - 1) {
+                        body[bi++] = *p++;
+                    }
+                    body[bi] = '\0';
+                    while (bi > 0 && (body[bi-1] == ' ' || body[bi-1] == '\t'))
+                        body[--bi] = '\0';
                     if (*p == '\n') p++;
+
+                    define_func_macro(name, (const char **)params, num_params, body, 0);
+                    for (int i = 0; i < num_params; i++) free(params[i]);
                     continue;
                 }
 
@@ -459,12 +529,102 @@ static char *preprocess_internal(char *source, int depth) {
             }
             word[i] = '\0';
 
-            const char *body = find_macro(word);
-            if (body) {
-                int len = strlen(body);
-                if (out_len + len < MAX_OUTPUT) {
-                    memcpy(output + out_len, body, len);
-                    out_len += len;
+            Macro *m = find_macro_entry(word);
+            if (m) {
+                if (m->is_func_like) {
+                    skip_whitespace(&p);
+                    if (*p == '(') {
+                        p++;
+                        char *args[MAX_MACRO_PARAMS];
+                        int num_args = 0;
+                        int depth = 1;
+                        const char *arg_start = p;
+                        while (*p && depth > 0) {
+                            if (*p == '(') depth++;
+                            else if (*p == ')') {
+                                depth--;
+                                if (depth == 0) {
+                                    int arg_len = (int)(p - arg_start);
+                                    if (arg_len > 0) {
+                                        args[num_args] = xmalloc(arg_len + 1);
+                                        memcpy(args[num_args], arg_start, arg_len);
+                                        args[num_args][arg_len] = '\0';
+                                        num_args++;
+                                    }
+                                    break;
+                                }
+                            } else if (*p == ',' && depth == 1) {
+                                int arg_len = (int)(p - arg_start);
+                                args[num_args] = xmalloc(arg_len + 1);
+                                memcpy(args[num_args], arg_start, arg_len);
+                                args[num_args][arg_len] = '\0';
+                                num_args++;
+                                arg_start = p + 1;
+                            }
+                            p++;
+                        }
+                        if (*p == ')') p++;
+
+                        char expanded[MAX_MACRO_BODY * 2];
+                        int ei = 0;
+                        const char *b = m->body;
+                        while (*b) {
+                            if (is_alpha(*b) || *b == '_') {
+                                char param_name[MAX_NAME];
+                                int pi = 0;
+                                const char *bstart = b;
+                                while ((is_alnum(*b) || *b == '_') && pi < MAX_NAME - 1) {
+                                    param_name[pi++] = *b++;
+                                }
+                                param_name[pi] = '\0';
+                                int found = 0;
+                                for (int ai = 0; ai < m->num_params && ai < num_args; ai++) {
+                                    if (strcmp(m->params[ai], param_name) == 0) {
+                                        int arg_len = strlen(args[ai]);
+                                        if (ei + arg_len < MAX_MACRO_BODY * 2) {
+                                            memcpy(expanded + ei, args[ai], arg_len);
+                                            ei += arg_len;
+                                        }
+                                        found = 1;
+                                        break;
+                                    }
+                                }
+                                if (!found) {
+                                    int wlen = (int)(b - bstart);
+                                    if (ei + wlen < MAX_MACRO_BODY * 2) {
+                                        memcpy(expanded + ei, bstart, wlen);
+                                        ei += wlen;
+                                    }
+                                }
+                            } else {
+                                if (ei < MAX_MACRO_BODY * 2 - 1)
+                                    expanded[ei++] = *b;
+                                b++;
+                            }
+                        }
+                        expanded[ei] = '\0';
+
+                        char *exp_result = preprocess_internal(expanded, depth);
+                        int len = strlen(exp_result);
+                        if (out_len + len < MAX_OUTPUT) {
+                            memcpy(output + out_len, exp_result, len);
+                            out_len += len;
+                        }
+                        free(exp_result);
+                        for (int ai = 0; ai < num_args; ai++) free(args[ai]);
+                    } else {
+                        int wlen = (int)(p - start);
+                        if (out_len + wlen < MAX_OUTPUT) {
+                            memcpy(output + out_len, start, wlen);
+                            out_len += wlen;
+                        }
+                    }
+                } else {
+                    int len = strlen(m->body);
+                    if (out_len + len < MAX_OUTPUT) {
+                        memcpy(output + out_len, m->body, len);
+                        out_len += len;
+                    }
                 }
             } else {
                 int wlen = (int)(p - start);

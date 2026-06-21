@@ -83,4 +83,7 @@ Type *pointer_to(Type *base);
 Type *array_of(Type *base, int len);
 Type *copy_type(Type *ty);
 
+void add_field(Type *struc, char *name, Type *type, int offset);
+Member *find_field(Type *struc, char *name);
+
 #endif

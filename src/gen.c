@@ -483,9 +483,9 @@ void emit_epilogue(CodeGen *gen) {
 }
 
 static const Register arg_regs[] = {
-    REG_RDI, REG_RSI, REG_RDX, REG_RCX, REG_R8, REG_R9,
+    REG_RCX, REG_RDX, REG_R8, REG_R9,
 };
-#define ARG_REG_COUNT 6
+#define ARG_REG_COUNT 4
 
 void emit_load_arg(CodeGen *gen, int index, Register dst) {
     if (index < 0)

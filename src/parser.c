@@ -70,6 +70,23 @@ static void load_var(Parser *p, Symbol *s) {
         emit_mov(p->gen, op_reg(REG_RAX, SZ_QWORD), op_imm(s->enum_val));
         return;
     }
+    // For struct/union types, load the address instead of the value
+    if (s->type && (s->type->kind == TY_STRUCT || s->type->kind == TY_UNION)) {
+        if (s->offset > 0) {
+            emit_lea(p->gen, op_reg(REG_RAX, SZ_QWORD), op_mem(REG_RBP, -(s->offset), SZ_QWORD));
+        } else {
+            char buf[256];
+            snprintf(buf, sizeof(buf), "lea rax, [%s]", s->name);
+            emit_raw(p->gen, buf);
+        }
+        p->has_lvalue = 1;
+        p->lvalue_is_stack = (s->offset > 0);
+        p->lvalue_base = REG_RBP;
+        p->lvalue_offset = s->offset;
+        p->lvalue_type = s->type;
+        p->expr_type = s->type;
+        return;
+    }
     OpSize sz = type_opsize(s->type);
     if (s->offset > 0) {
         Operand src = op_mem(REG_RBP, -(s->offset), sz);
@@ -181,12 +198,60 @@ static Type *parse_type_spec(Parser *p) {
         next(p);
         Token name = expect(p, TK_IDENT);
         char *s = tok_str(&name);
-        Type *ty = (t.kind == TK_STRUCT) ? ty_struct(s) : ty_union(s);
+        // Look up existing struct type
+        Type *ty = NULL;
+        Symbol *tag = sym_find(s);
+        if (tag && tag->kind == SYM_TAG) {
+            ty = tag->type;
+        } else {
+            ty = (t.kind == TK_STRUCT) ? ty_struct(s) : ty_union(s);
+            sym_declare(xstrdup(s), SYM_TAG, ty);
+        }
+        if (peek(p).kind == TK_LBRACE) {
+            next(p);
+            int offset = 0;
+            int max_align = 1;
+            while (peek(p).kind != TK_RBRACE) {
+                Type *field_type = parse_type_spec(p);
+                Token field_name = expect(p, TK_IDENT);
+                while (peek(p).kind == TK_STAR) { next(p); field_type = pointer_to(field_type); }
+                if (peek(p).kind == TK_LBRACKET) {
+                    next(p);
+                    Token size = expect(p, TK_INT);
+                    expect(p, TK_RBRACKET);
+                    field_type = ty_array(field_type, (int)size.ival);
+                }
+                expect(p, TK_SEMICOLON);
+                if (field_type->align > max_align) max_align = field_type->align;
+                offset = (offset + field_type->align - 1) & ~(field_type->align - 1);
+                add_field(ty, tok_str(&field_name), field_type, offset);
+                offset += field_type->size;
+            }
+            expect(p, TK_RBRACE);
+            ty->size = (offset + max_align - 1) & ~(max_align - 1);
+            ty->align = max_align;
+        }
         return ty;
     }
     if (t.kind == TK_ENUM) {
         next(p);
         if (peek(p).kind == TK_IDENT) next(p);
+        if (peek(p).kind == TK_LBRACE) {
+            next(p);
+            int val = 0;
+            while (peek(p).kind != TK_RBRACE) {
+                Token name = expect(p, TK_IDENT);
+                if (peek(p).kind == TK_ASSIGN) {
+                    next(p);
+                    Token t2 = expect(p, TK_INT);
+                    val = (int)t2.ival;
+                }
+                sym_declare_enum(tok_str(&name), val);
+                val++;
+                if (peek(p).kind == TK_COMMA) next(p);
+            }
+            expect(p, TK_RBRACE);
+        }
         return ty_int();
     }
     if (is_unsigned) return ty_uint();
@@ -246,7 +311,6 @@ static void parse_primary(Parser *p) {
             p->expr_type = ty;
             p->has_lvalue = 0;
         } else {
-            next(p);
             parse_expr(p);
             expect(p, TK_RPAREN);
         }
@@ -271,7 +335,7 @@ static void parse_postfix(Parser *p) {
                 } while (peek(p).kind == TK_COMMA && (next(p), 1));
             }
             expect(p, TK_RPAREN);
-            static const Register arg_regs2[] = {REG_RDI, REG_RSI, REG_RDX, REG_RCX, REG_R8, REG_R9};
+            static const Register arg_regs2[] = {REG_RCX, REG_RDX, REG_R8, REG_R9};
             for (int i = (nargs < 6 ? nargs : 6) - 1; i >= 0; i--)
                 emit_pop(p->gen, op_reg(arg_regs2[i], SZ_QWORD));
             emit_call(p->gen, p->last_ident);
@@ -288,6 +352,16 @@ static void parse_postfix(Parser *p) {
             Type *base = p->expr_type->base ? p->expr_type->base : ty_int();
             emit_imul(p->gen, op_reg(REG_RAX, SZ_QWORD), op_imm(base->size));
             emit_add(p->gen, op_reg(REG_RAX, SZ_QWORD), op_reg(REG_R10, SZ_QWORD));
+            // Load value from computed address
+            OpSize sz = type_opsize(base);
+            if (sz == SZ_BYTE || sz == SZ_WORD) {
+                if (base->is_unsigned)
+                    emit_movzx(p->gen, op_reg(REG_RAX, SZ_QWORD), op_mem(REG_RAX, 0, sz));
+                else
+                    emit_movsx(p->gen, op_reg(REG_RAX, SZ_QWORD), op_mem(REG_RAX, 0, sz));
+            } else {
+                emit_mov(p->gen, op_reg(REG_RAX, sz), op_mem(REG_RAX, 0, sz));
+            }
             p->has_lvalue = 1;
             p->lvalue_is_stack = 0;
             p->lvalue_base = REG_RAX;
@@ -297,13 +371,60 @@ static void parse_postfix(Parser *p) {
         } else if (t.kind == TK_DOT) {
             next(p);
             Token field = expect(p, TK_IDENT);
-            (void)field;
-            p->has_lvalue = 0;
+            char *field_name = tok_str(&field);
+            if (p->expr_type && (p->expr_type->kind == TY_STRUCT || p->expr_type->kind == TY_UNION)) {
+                Member *f = find_field(p->expr_type, field_name);
+                if (f) {
+                    // At this point, RAX should contain the address of the struct
+                    // Add the field offset to get the address of the field
+                    emit_add(p->gen, op_reg(REG_RAX, SZ_QWORD), op_imm(f->offset));
+                    // Load the value from the computed address
+                    OpSize sz = type_opsize(f->type);
+                    if (sz == SZ_BYTE || sz == SZ_WORD) {
+                        if (f->type->is_unsigned)
+                            emit_movzx(p->gen, op_reg(REG_RAX, SZ_QWORD), op_mem(REG_RAX, 0, sz));
+                        else
+                            emit_movsx(p->gen, op_reg(REG_RAX, SZ_QWORD), op_mem(REG_RAX, 0, sz));
+                    } else {
+                        emit_mov(p->gen, op_reg(REG_RAX, sz), op_mem(REG_RAX, 0, sz));
+                    }
+                    // Set up lvalue info for the field
+                    p->expr_type = f->type;
+                    p->has_lvalue = 1;
+                    p->lvalue_is_stack = 0;
+                    p->lvalue_base = REG_RAX;
+                    p->lvalue_offset = 0;
+                    p->lvalue_type = f->type;
+                }
+            }
+            free(field_name);
         } else if (t.kind == TK_ARROW) {
             next(p);
             Token field = expect(p, TK_IDENT);
-            (void)field;
-            p->has_lvalue = 0;
+            char *field_name = tok_str(&field);
+            if (p->expr_type && p->expr_type->base && 
+                (p->expr_type->base->kind == TY_STRUCT || p->expr_type->base->kind == TY_UNION)) {
+                Member *f = find_field(p->expr_type->base, field_name);
+                if (f) {
+                    emit_add(p->gen, op_reg(REG_RAX, SZ_QWORD), op_imm(f->offset));
+                    OpSize sz = type_opsize(f->type);
+                    if (sz == SZ_BYTE || sz == SZ_WORD) {
+                        if (f->type->is_unsigned)
+                            emit_movzx(p->gen, op_reg(REG_RAX, SZ_QWORD), op_mem(REG_RAX, 0, sz));
+                        else
+                            emit_movsx(p->gen, op_reg(REG_RAX, SZ_QWORD), op_mem(REG_RAX, 0, sz));
+                    } else {
+                        emit_mov(p->gen, op_reg(REG_RAX, sz), op_mem(REG_RAX, 0, sz));
+                    }
+                    p->expr_type = f->type;
+                    p->has_lvalue = 1;
+                    p->lvalue_is_stack = 0;
+                    p->lvalue_base = REG_RAX;
+                    p->lvalue_offset = 0;
+                    p->lvalue_type = f->type;
+                }
+            }
+            free(field_name);
         } else if (t.kind == TK_PLUSPLUS) {
             next(p);
             emit_mov(p->gen, op_reg(REG_R10, SZ_QWORD), op_reg(REG_RAX, SZ_QWORD));
@@ -333,7 +454,7 @@ static void parse_cast(Parser *p) {
             Type *ty = parse_type_spec(p);
             while (peek(p).kind == TK_STAR) { next(p); ty = pointer_to(ty); }
             expect(p, TK_RPAREN);
-            parse_cast(p);
+            parse_unary(p);
             p->expr_type = ty;
             p->has_lvalue = 0;
             return;
@@ -426,19 +547,19 @@ static void parse_unary(Parser *p) {
 }
 
 static void parse_mul(Parser *p) {
-    parse_cast(p);
+    parse_unary(p);
     for (;;) {
         Token t = peek(p);
         if (t.kind == TK_STAR) {
             next(p);
             emit_push(p->gen, op_reg(REG_RAX, SZ_QWORD));
-            parse_cast(p);
+            parse_unary(p);
             emit_pop(p->gen, op_reg(REG_R10, SZ_QWORD));
             emit_imul(p->gen, op_reg(REG_RAX, SZ_QWORD), op_reg(REG_R10, SZ_QWORD));
         } else if (t.kind == TK_SLASH) {
             next(p);
             emit_push(p->gen, op_reg(REG_RAX, SZ_QWORD));
-            parse_cast(p);
+            parse_unary(p);
             emit_mov(p->gen, op_reg(REG_R11, SZ_QWORD), op_reg(REG_RAX, SZ_QWORD));
             emit_pop(p->gen, op_reg(REG_RAX, SZ_QWORD));
             emit_cqo(p);
@@ -446,7 +567,7 @@ static void parse_mul(Parser *p) {
         } else if (t.kind == TK_PERCENT) {
             next(p);
             emit_push(p->gen, op_reg(REG_RAX, SZ_QWORD));
-            parse_cast(p);
+            parse_unary(p);
             emit_mov(p->gen, op_reg(REG_R11, SZ_QWORD), op_reg(REG_RAX, SZ_QWORD));
             emit_pop(p->gen, op_reg(REG_RAX, SZ_QWORD));
             emit_cqo(p);
@@ -658,18 +779,36 @@ static void parse_assign(Parser *p) {
     Token t = peek(p);
     if (t.kind == TK_ASSIGN) {
         next(p);
+        // Save lvalue info
         int saved_has = p->has_lvalue;
         Register saved_base = p->lvalue_base;
         int saved_off = p->lvalue_offset;
         Type *saved_type = p->lvalue_type;
         int saved_stack = p->lvalue_is_stack;
+        // If we have a non-stack lvalue (e.g., struct field access), push the address
+        if (p->has_lvalue && !p->lvalue_is_stack) {
+            emit_push(p->gen, op_reg(REG_RAX, SZ_QWORD));
+        }
         parse_assign(p);
+        // Restore lvalue info
         p->has_lvalue = saved_has;
         p->lvalue_base = saved_base;
         p->lvalue_offset = saved_off;
         p->lvalue_type = saved_type;
         p->lvalue_is_stack = saved_stack;
-        store_to_lvalue(p);
+        // Pop the address from the stack and store the value
+        if (p->has_lvalue && !p->lvalue_is_stack) {
+            emit_pop(p->gen, op_reg(REG_R10, SZ_QWORD));
+            OpSize sz = type_opsize(p->lvalue_type);
+            Operand src;
+            if (sz == SZ_BYTE) src = op_reg(REG_RAX, SZ_BYTE);
+            else if (sz == SZ_WORD) src = op_reg(REG_RAX, SZ_WORD);
+            else if (sz == SZ_DWORD) src = op_reg(REG_RAX, SZ_DWORD);
+            else src = op_reg(REG_RAX, SZ_QWORD);
+            emit_mov(p->gen, op_mem(REG_R10, 0, sz), src);
+        } else {
+            store_to_lvalue(p);
+        }
     } else if (t.kind == TK_ADDASSIGN || t.kind == TK_SUBASSIGN ||
                t.kind == TK_MULASSIGN || t.kind == TK_DIVASSIGN ||
                t.kind == TK_MODASSIGN || t.kind == TK_ANDASSIGN ||
@@ -715,7 +854,7 @@ static void parse_var_decl(Parser *p, Type *base_type) {
     while (peek(p).kind == TK_STAR) { next(p); ty = pointer_to(ty); }
     Token name = expect(p, TK_IDENT);
     char *name_str = tok_str(&name);
-    if (peek(p).kind == TK_LBRACKET) {
+    while (peek(p).kind == TK_LBRACKET) {
         next(p);
         Token len = expect(p, TK_INT);
         expect(p, TK_RBRACKET);
@@ -966,6 +1105,20 @@ static void parse_func(Parser *p, Type *ret_type, char *name) {
     prologue[npro - 1]->next = f->head;
     f->head = prologue[0];
     if (!f->tail) f->tail = prologue[npro - 1];
+    // Save register parameters to stack
+    static const Register param_regs[] = {REG_RCX, REG_RDX, REG_R8, REG_R9};
+    for (int i = 0; i < param_count && i < 4; i++) {
+        int offset = (i + 1) * 8;
+        Instr si;
+        memset(&si, 0, sizeof(si));
+        si.kind = I_MOV;
+        si.dst = op_mem(REG_RBP, -offset, SZ_QWORD);
+        si.src = op_reg(param_regs[i], SZ_QWORD);
+        Instr *store = xmalloc(sizeof(Instr));
+        *store = si;
+        store->next = f->head->next->next;
+        f->head->next->next = store;
+    }
     scope_pop();
     free(name);
 }
@@ -973,9 +1126,24 @@ static void parse_func(Parser *p, Type *ret_type, char *name) {
 void parse_translation_unit(Parser *p) {
     scope_push();
     while (peek(p).kind != TK_EOF) {
+        if (peek(p).kind == TK_TYPEDEF) {
+            next(p);
+            Type *base_type = parse_type_spec(p);
+            Type *ty = base_type;
+            while (peek(p).kind == TK_STAR) { next(p); ty = pointer_to(ty); }
+            Token name = expect(p, TK_IDENT);
+            sym_declare_typedef(tok_str(&name), ty);
+            expect(p, TK_SEMICOLON);
+            continue;
+        }
         Type *base_type = parse_type_spec(p);
         Type *ty = base_type;
         while (peek(p).kind == TK_STAR) { next(p); ty = pointer_to(ty); }
+        // Check if this is just a struct/union/enum definition without a variable
+        if (peek(p).kind == TK_SEMICOLON) {
+            next(p);
+            continue;
+        }
         Token name = expect(p, TK_IDENT);
         char *name_str = tok_str(&name);
         if (peek(p).kind == TK_LPAREN) {

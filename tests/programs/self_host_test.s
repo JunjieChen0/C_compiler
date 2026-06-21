@@ -4,6 +4,7 @@ global sum_to_n
 sum_to_n:
   push    rbp
   mov     rbp, rsp
+  mov     qword [rbp-8], rcx
   sub     rsp, 16
   mov     rax, 0
   mov     dword [rbp-12], eax
@@ -46,6 +47,7 @@ global is_even
 is_even:
   push    rbp
   mov     rbp, rsp
+  mov     qword [rbp-8], rcx
   sub     rsp, 16
   mov     eax, dword [rbp-8]
   push    rax
