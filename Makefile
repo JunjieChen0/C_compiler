@@ -1,6 +1,6 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -std=c99 -g
-SRCS = src/main.c src/utils.c src/lexer.c src/type.c src/sym.c
+SRCS = src/main.c src/utils.c src/lexer.c src/type.c src/sym.c src/gen.c
 OBJS = $(SRCS:.c=.o)
 
 cc: $(OBJS)
@@ -21,7 +21,11 @@ test_sym: tests/test_sym.c src/sym.c src/type.c src/utils.c
 	$(CC) $(CFLAGS) -o tests/test_sym.exe tests/test_sym.c src/sym.c src/type.c src/utils.c
 	tests\test_sym.exe
 
-clean:
-	del /Q src\*.o tests\test_lexer.exe tests\test_type.exe tests\test_sym.exe 2>nul || true
+test_gen: tests/test_gen.c src/gen.c src/utils.c
+	$(CC) $(CFLAGS) -o tests/test_gen.exe tests/test_gen.c src/gen.c src/utils.c
+	tests\test_gen.exe
 
-.PHONY: clean test_lexer test_type test_sym
+clean:
+	del /Q src\*.o tests\test_lexer.exe tests\test_type.exe tests\test_sym.exe tests\test_gen.exe 2>nul || true
+
+.PHONY: clean test_lexer test_type test_sym test_gen
