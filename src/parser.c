@@ -375,26 +375,38 @@ static void parse_postfix(Parser *p) {
             if (p->expr_type && (p->expr_type->kind == TY_STRUCT || p->expr_type->kind == TY_UNION)) {
                 Member *f = find_field(p->expr_type, field_name);
                 if (f) {
-                    // At this point, RAX should contain the address of the struct
-                    // Add the field offset to get the address of the field
-                    emit_add(p->gen, op_reg(REG_RAX, SZ_QWORD), op_imm(f->offset));
-                    // Load the value from the computed address
-                    OpSize sz = type_opsize(f->type);
-                    if (sz == SZ_BYTE || sz == SZ_WORD) {
-                        if (f->type->is_unsigned)
-                            emit_movzx(p->gen, op_reg(REG_RAX, SZ_QWORD), op_mem(REG_RAX, 0, sz));
-                        else
-                            emit_movsx(p->gen, op_reg(REG_RAX, SZ_QWORD), op_mem(REG_RAX, 0, sz));
+                    // If the struct is on the stack, compute the field address from RBP
+                    if (p->has_lvalue && p->lvalue_is_stack) {
+                        int field_offset = p->lvalue_offset - f->offset;
+                        OpSize sz = type_opsize(f->type);
+                        if (sz == SZ_BYTE || sz == SZ_WORD) {
+                            if (f->type->is_unsigned)
+                                emit_movzx(p->gen, op_reg(REG_RAX, SZ_QWORD), op_mem(REG_RBP, -field_offset, sz));
+                            else
+                                emit_movsx(p->gen, op_reg(REG_RAX, SZ_QWORD), op_mem(REG_RBP, -field_offset, sz));
+                        } else {
+                            emit_mov(p->gen, op_reg(REG_RAX, sz), op_mem(REG_RBP, -field_offset, sz));
+                        }
+                        p->expr_type = f->type;
+                        p->has_lvalue = 1;
+                        p->lvalue_is_stack = 1;
+                        p->lvalue_offset = field_offset;
+                        p->lvalue_type = f->type;
                     } else {
-                        emit_mov(p->gen, op_reg(REG_RAX, sz), op_mem(REG_RAX, 0, sz));
+                        // For non-stack structs, compute address and load value
+                        emit_add(p->gen, op_reg(REG_RAX, SZ_QWORD), op_imm(f->offset));
+                        OpSize sz = type_opsize(f->type);
+                        if (sz == SZ_BYTE || sz == SZ_WORD) {
+                            if (f->type->is_unsigned)
+                                emit_movzx(p->gen, op_reg(REG_RAX, SZ_QWORD), op_mem(REG_RAX, 0, sz));
+                            else
+                                emit_movsx(p->gen, op_reg(REG_RAX, SZ_QWORD), op_mem(REG_RAX, 0, sz));
+                        } else {
+                            emit_mov(p->gen, op_reg(REG_RAX, sz), op_mem(REG_RAX, 0, sz));
+                        }
+                        p->expr_type = f->type;
+                        p->has_lvalue = 0;
                     }
-                    // Set up lvalue info for the field
-                    p->expr_type = f->type;
-                    p->has_lvalue = 1;
-                    p->lvalue_is_stack = 0;
-                    p->lvalue_base = REG_RAX;
-                    p->lvalue_offset = 0;
-                    p->lvalue_type = f->type;
                 }
             }
             free(field_name);
@@ -417,11 +429,7 @@ static void parse_postfix(Parser *p) {
                         emit_mov(p->gen, op_reg(REG_RAX, sz), op_mem(REG_RAX, 0, sz));
                     }
                     p->expr_type = f->type;
-                    p->has_lvalue = 1;
-                    p->lvalue_is_stack = 0;
-                    p->lvalue_base = REG_RAX;
-                    p->lvalue_offset = 0;
-                    p->lvalue_type = f->type;
+                    p->has_lvalue = 0;
                 }
             }
             free(field_name);
