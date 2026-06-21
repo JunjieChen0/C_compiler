@@ -13,6 +13,14 @@ static int is_type_start(Parser *p);
 static Token next(Parser *p) { return lexer_next(&p->lexer); }
 static Token peek(Parser *p) { return lexer_peek(&p->lexer); }
 
+static Token peek2(Parser *p) {
+    Lexer saved = p->lexer;
+    next(p); // skip first token
+    Token t = peek(p); // peek at second token
+    p->lexer = saved; // restore
+    return t;
+}
+
 static Token expect(Parser *p, TokenKind kind) {
     Token t = next(p);
     if (t.kind != kind)
@@ -221,7 +229,42 @@ static Type *parse_type_spec(Parser *p) {
             int offset = 0;
             int max_align = 1;
             while (peek(p).kind != TK_RBRACE) {
-                Type *field_type = parse_type_spec(p);
+                Type *field_type = NULL;
+                
+                // Check for struct/union pointer fields like "struct Macro *next"
+                if (peek(p).kind == TK_STRUCT || peek(p).kind == TK_UNION) {
+                    Lexer saved = p->lexer;
+                    Token struct_tok = next(p);
+                    if (peek(p).kind == TK_IDENT && peek2(p).kind == TK_STAR) {
+                        // This is "struct Name *field" pattern
+                        Token name = next(p);
+                        char *s = tok_str(&name);
+                        // Look up or create the struct type
+                        Type *struct_ty = NULL;
+                        Symbol *tag = sym_find(s);
+                        if (tag && tag->kind == SYM_TAG) {
+                            struct_ty = tag->type;
+                        } else {
+                            struct_ty = (struct_tok.kind == TK_STRUCT) ? ty_struct(s) : ty_union(s);
+                            sym_declare(xstrdup(s), SYM_TAG, struct_ty);
+                        }
+                        free(s);
+                        // Skip the * and create pointer type
+                        next(p);
+                        field_type = pointer_to(struct_ty);
+                        Token field_name = expect(p, TK_IDENT);
+                        expect(p, TK_SEMICOLON);
+                        if (field_type->align > max_align) max_align = field_type->align;
+                        offset = (offset + field_type->align - 1) & ~(field_type->align - 1);
+                        add_field(ty, tok_str(&field_name), field_type, offset);
+                        offset += field_type->size;
+                        continue;
+                    }
+                    // Not the pattern we're looking for, restore and parse normally
+                    p->lexer = saved;
+                }
+                
+                field_type = parse_type_spec(p);
                 // Handle pointer types before field name
                 while (peek(p).kind == TK_STAR) { next(p); field_type = pointer_to(field_type); }
                 Token field_name = expect(p, TK_IDENT);
