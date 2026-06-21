@@ -17,6 +17,8 @@ static Symbol *new_symbol(SymbolKind kind, char *name, Type *type) {
     sym->type = type;
     sym->enum_val = 0;
     sym->offset = 0;
+    sym->is_static = 0;
+    sym->is_extern = 0;
     sym->next = NULL;
     return sym;
 }

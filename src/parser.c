@@ -1047,7 +1047,11 @@ static void parse_statement(Parser *p) {
         emit_jmp_id(p, p->continue_label);
     } else if (t.kind == TK_SEMICOLON) {
         next(p);
-    } else if (is_type_start(p)) {
+    } else if (is_type_start(p) || t.kind == TK_STATIC || t.kind == TK_EXTERN) {
+        int is_static = 0;
+        int is_extern = 0;
+        if (t.kind == TK_STATIC) { is_static = 1; next(p); }
+        else if (t.kind == TK_EXTERN) { is_extern = 1; next(p); }
         Type *base = parse_type_spec(p);
         parse_var_decl(p, base);
         expect(p, TK_SEMICOLON);
@@ -1169,6 +1173,11 @@ void parse_translation_unit(Parser *p) {
             expect(p, TK_SEMICOLON);
             continue;
         }
+        // Handle storage classes
+        int is_static = 0;
+        int is_extern = 0;
+        if (peek(p).kind == TK_STATIC) { is_static = 1; next(p); }
+        else if (peek(p).kind == TK_EXTERN) { is_extern = 1; next(p); }
         Type *base_type = parse_type_spec(p);
         Type *ty = base_type;
         while (peek(p).kind == TK_STAR) { next(p); ty = pointer_to(ty); }

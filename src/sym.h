@@ -19,6 +19,8 @@ struct Symbol {
     Type *type;
     int enum_val;
     int offset;     // stack offset for local variables (bytes from rbp)
+    int is_static;  // static storage class
+    int is_extern;  // extern storage class
     Symbol *next;
 };
 
