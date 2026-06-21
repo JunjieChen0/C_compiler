@@ -18,6 +18,7 @@ struct Symbol {
     char *name;
     Type *type;
     int enum_val;
+    int offset;     // stack offset for local variables (bytes from rbp)
     Symbol *next;
 };
 

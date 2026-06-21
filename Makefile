@@ -33,7 +33,20 @@ test_pe: tests/test_pe.c src/pe.c src/utils.c
 	$(CC) $(CFLAGS) -o tests/test_pe.exe tests/test_pe.c src/pe.c src/utils.c
 	tests\test_pe.exe
 
+TEST_PROGRAMS = simple vars factorial loop preprocess_test self_host_test control_flow pointer_array bitwise string_ops
+TEST_ASM = $(addprefix tests/programs/,$(addsuffix .s,$(TEST_PROGRAMS)))
+
+test_integration: cc $(TEST_ASM)
+	@echo Integration tests passed: all test programs compiled successfully
+
+tests/programs/%.s: tests/programs/%.c cc
+	./cc.exe $< -o $@
+
+test_all: test_lexer test_type test_sym test_gen test_preprocess test_pe test_integration
+	@echo All tests passed
+
 clean:
 	del /Q src\*.o tests\test_lexer.exe tests\test_type.exe tests\test_sym.exe tests\test_gen.exe tests\test_pe.exe 2>nul || true
+	del /Q tests\programs\*.s 2>nul || true
 
-.PHONY: clean test_lexer test_type test_sym test_gen test_preprocess test_pe
+.PHONY: clean test_lexer test_type test_sym test_gen test_preprocess test_pe test_integration test_all
