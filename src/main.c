@@ -27,10 +27,8 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Usage: cc <file.c> [-o output.s]\n");
         return 1;
     }
-
     char *input_file = NULL;
     char *output_file = NULL;
-
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) {
             output_file = argv[++i];
@@ -38,29 +36,21 @@ int main(int argc, char **argv) {
             input_file = argv[i];
         }
     }
-
     if (!input_file) {
         fprintf(stderr, "No input file\n");
         return 1;
     }
-
     char *source = read_file(input_file);
     set_current_file(input_file);
-
     char *preprocessed = preprocess(source, input_file);
     set_current_input(preprocessed);
-
     scope_reset();
-
     CodeGen gen;
     gen_init(&gen);
-
     Parser parser;
     parser_init(&parser, preprocessed, &gen);
     parse_translation_unit(&parser);
-
     char *asm_output = parser_flush(&parser);
-
     if (!output_file) {
         char *dot = strrchr(input_file, '.');
         int base_len = dot ? (int)(dot - input_file) : strlen(input_file);
@@ -68,7 +58,6 @@ int main(int argc, char **argv) {
         memcpy(output_file, input_file, base_len);
         strcpy(output_file + base_len, ".s");
     }
-
     FILE *f = fopen(output_file, "w");
     if (!f) {
         fprintf(stderr, "Cannot open output file %s\n", output_file);
@@ -76,9 +65,7 @@ int main(int argc, char **argv) {
     }
     fprintf(f, "%s", asm_output);
     fclose(f);
-
     fprintf(stderr, "Compiled %s -> %s\n", input_file, output_file);
-
     gen_free(&gen);
     free(preprocessed);
     free(source);

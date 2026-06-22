@@ -31,6 +31,9 @@ void gen_init(CodeGen *gen) {
     gen->func_count = 0;
     gen->func_cap = 0;
     gen->output = string_new("");
+    gen->externs = NULL;
+    gen->extern_count = 0;
+    gen->extern_cap = 0;
     memset(reg_used, 0, sizeof(reg_used));
 }
 
@@ -46,9 +49,11 @@ void gen_free(CodeGen *gen) {
     }
     free(gen->funcs);
     free(gen->output.data);
+    for (int i = 0; i < gen->extern_count; i++) free(gen->externs[i]);
+    free(gen->externs);
 }
 
-void gen_func_begin(CodeGen *gen, const char *name, int num_params) {
+void gen_func_begin(CodeGen *gen, const char *name, int num_params, int is_static) {
     if (gen->func_count >= gen->func_cap) {
         gen->func_cap = gen->func_cap ? gen->func_cap * 2 : 16;
         gen->funcs = xrealloc(gen->funcs, sizeof(Function) * gen->func_cap);
@@ -58,6 +63,7 @@ void gen_func_begin(CodeGen *gen, const char *name, int num_params) {
     f->name[sizeof(f->name) - 1] = '\0';
     f->stack_size = 0;
     f->num_params = num_params;
+    f->is_static = is_static;
     f->head = NULL;
     f->tail = NULL;
 }
@@ -239,7 +245,22 @@ static String format_instr(Instr *instr) {
     return line;
 }
 
+static int is_defined_func(CodeGen *gen, const char *name) {
+    for (int i = 0; i < gen->func_count; i++) {
+        if (strcmp(gen->funcs[i].name, name) == 0) return 1;
+    }
+    return 0;
+}
+
 void gen_flush(CodeGen *gen) {
+    /* Emit extern declarations for called but not defined functions */
+    for (int i = 0; i < gen->extern_count; i++) {
+        if (!is_defined_func(gen, gen->externs[i])) {
+            char buf[256];
+            snprintf(buf, sizeof(buf), "extern %s\n", gen->externs[i]);
+            gen->output = str_append_cstr(gen->output, buf);
+        }
+    }
     gen->output = str_append_cstr(gen->output, "section .text\n");
 
     for (int i = 0; i < gen->func_count; i++) {
@@ -247,7 +268,8 @@ void gen_flush(CodeGen *gen) {
         char buf[256];
 
         snprintf(buf, sizeof(buf), "\nglobal %s\n", f->name);
-        gen->output = str_append_cstr(gen->output, buf);
+        if (!f->is_static)
+            gen->output = str_append_cstr(gen->output, buf);
 
         snprintf(buf, sizeof(buf), "%s:\n", f->name);
         gen->output = str_append_cstr(gen->output, buf);
@@ -425,8 +447,20 @@ void emit_jbe(CodeGen *gen, const char *label)   { emit_jump(gen, I_JBE, label);
 void emit_ja(CodeGen *gen, const char *label)    { emit_jump(gen, I_JA, label); }
 void emit_jae(CodeGen *gen, const char *label)   { emit_jump(gen, I_JAE, label); }
 
+static void track_extern(CodeGen *gen, const char *name) {
+    for (int i = 0; i < gen->extern_count; i++) {
+        if (strcmp(gen->externs[i], name) == 0) return;
+    }
+    if (gen->extern_count >= gen->extern_cap) {
+        gen->extern_cap = gen->extern_cap == 0 ? 64 : gen->extern_cap * 2;
+        gen->externs = xrealloc(gen->externs, sizeof(char *) * gen->extern_cap);
+    }
+    gen->externs[gen->extern_count++] = xstrdup(name);
+}
+
 void emit_call(CodeGen *gen, const char *func_name) {
     emit_jump(gen, I_CALL, func_name);
+    track_extern(gen, func_name);
 }
 
 void emit_ret(CodeGen *gen)  { emit_0op(gen, I_RET); }

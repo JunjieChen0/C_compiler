@@ -96,6 +96,7 @@ typedef struct {
     char name[128];
     int stack_size;
     int num_params;
+    int is_static;
     Instr *head;
     Instr *tail;
 } Function;
@@ -106,12 +107,16 @@ typedef struct {
     int func_cap;
 
     String output;
+
+    char **externs;
+    int extern_count;
+    int extern_cap;
 } CodeGen;
 
 void gen_init(CodeGen *gen);
 void gen_free(CodeGen *gen);
 
-void gen_func_begin(CodeGen *gen, const char *name, int num_params);
+void gen_func_begin(CodeGen *gen, const char *name, int num_params, int is_static);
 void gen_func_end(CodeGen *gen);
 
 void gen_emit(CodeGen *gen, Instr instr);

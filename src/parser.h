@@ -29,6 +29,7 @@ typedef struct {
     int lvalue_offset;
     Type *lvalue_type;
     int lvalue_is_stack;
+    int lvalue_addr_slot;  /* stack slot holding pointer address for non-stack lvalues */
     StringLit strings[MAX_STRINGS];
     int string_count;
     char last_ident[256];

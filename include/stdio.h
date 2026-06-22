@@ -11,9 +11,10 @@ typedef struct _FILE FILE;
 #define SEEK_CUR 1
 #define SEEK_END 2
 
-#define stdin  ((FILE *)0)
-#define stdout ((FILE *)1)
-#define stderr ((FILE *)2)
+#define stdin  ((FILE *)__acrt_iob_func(0))
+#define stdout ((FILE *)__acrt_iob_func(1))
+#define stderr ((FILE *)__acrt_iob_func(2))
+FILE *__acrt_iob_func(int index);
 
 FILE *fopen(const char *path, const char *mode);
 int fclose(FILE *fp);
