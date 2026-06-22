@@ -583,8 +583,6 @@ static void parse_postfix(Parser *p) {
             snprintf(func_name, sizeof(func_name), "%s", p->last_ident);
             next(p);
             int nargs = 0;
-            /* Allocate 32-byte shadow space (Windows x64 ABI) */
-            emit_sub(p->gen, op_reg(REG_RSP, SZ_QWORD), op_imm(32));
             if (peek(p).kind != TK_RPAREN) {
                 do {
                     parse_assign(p);
@@ -593,6 +591,9 @@ static void parse_postfix(Parser *p) {
                 } while (peek(p).kind == TK_COMMA && (next(p), 1));
             }
             expect(p, TK_RPAREN);
+            /* Allocate 32-byte shadow space AFTER argument parsing
+               (so nested calls in arguments manage their own shadow space) */
+            emit_sub(p->gen, op_reg(REG_RSP, SZ_QWORD), op_imm(32));
             static const Register arg_regs2[] = {REG_RCX, REG_RDX, REG_R8, REG_R9};
             for (int i = (nargs < 4 ? nargs : 4) - 1; i >= 0; i--)
                 emit_pop(p->gen, op_reg(arg_regs2[i], SZ_QWORD));
