@@ -81,6 +81,7 @@ typedef enum {
     I_MOVZX,
     I_MOVSX,
     I_LABEL,
+    I_RAW,
 } InstrKind;
 
 typedef struct Instr Instr;

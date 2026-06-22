@@ -137,6 +137,13 @@ static String format_operand(Operand *op) {
 }
 
 static String format_instr(Instr *instr) {
+    if (instr->kind == I_RAW) {
+        String line = string_new("  ");
+        line = str_append_cstr(line, instr->dst.label);
+        line = str_append_cstr(line, "\n");
+        return line;
+    }
+
     String line = string_new("");
     char buf[16];
 
@@ -261,7 +268,7 @@ void gen_flush(CodeGen *gen) {
             gen->output = str_append_cstr(gen->output, buf);
         }
     }
-    gen->output = str_append_cstr(gen->output, "section .text\n");
+    gen->output = str_append_cstr(gen->output, "default rel\nsection .text\n");
 
     for (int i = 0; i < gen->func_count; i++) {
         Function *f = &gen->funcs[i];
@@ -499,8 +506,14 @@ void emit_comment(CodeGen *gen, const char *comment) {
 }
 
 void emit_raw(CodeGen *gen, const char *line) {
-    (void)gen;
-    (void)line;
+    Function *f = &gen->funcs[gen->func_count - 1];
+    Instr *instr = xmalloc(sizeof(Instr));
+    memset(instr, 0, sizeof(Instr));
+    instr->kind = I_RAW;
+    strncpy(instr->dst.label, line, sizeof(instr->dst.label) - 1);
+    instr->dst.label[sizeof(instr->dst.label) - 1] = '\0';
+    if (f->tail) { f->tail->next = instr; f->tail = instr; }
+    else { f->head = instr; f->tail = instr; }
 }
 
 void emit_prologue(CodeGen *gen, int stack_size) {

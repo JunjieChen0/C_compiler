@@ -7,6 +7,12 @@
 #include "gen.h"
 
 #define MAX_STRINGS 256
+#define MAX_GLOBALS 256
+
+typedef struct {
+    char *name;
+    int size;
+} GlobalVar;
 
 typedef struct {
     char *label;
@@ -30,8 +36,12 @@ typedef struct {
     Type *lvalue_type;
     int lvalue_is_stack;
     int lvalue_addr_slot;  /* stack slot holding pointer address for non-stack lvalues */
+    int lvalue_is_global;  /* 1 if lvalue is a global variable */
+    char lvalue_name[256]; /* name for global variable lvalues */
     StringLit strings[MAX_STRINGS];
     int string_count;
+    GlobalVar globals[MAX_GLOBALS];
+    int global_count;
     char last_ident[256];
 } Parser;
 

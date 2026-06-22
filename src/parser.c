@@ -93,6 +93,17 @@ static char *tok_str(Token *t) {
 
 static int next_label(Parser *p) { return p->label_count++; }
 
+static void register_global(Parser *p, const char *name, int size) {
+    for (int i = 0; i < p->global_count; i++) {
+        if (strcmp(p->globals[i].name, name) == 0) return;
+    }
+    if (p->global_count < MAX_GLOBALS) {
+        p->globals[p->global_count].name = xstrdup(name);
+        p->globals[p->global_count].size = size;
+        p->global_count++;
+    }
+}
+
 static void emit_label_id(Parser *p, int id) {
     char buf[32];
     snprintf(buf, sizeof(buf), ".L%d", id);
@@ -133,6 +144,12 @@ static void load_var(Parser *p, Symbol *s) {
         emit_mov(p->gen, op_reg(REG_RAX, SZ_QWORD), op_imm(s->enum_val));
         return;
     }
+    // For function symbols, don't load - function calls use emit_call directly
+    if (s->kind == SYM_FUNC) {
+        p->has_lvalue = 0;
+        p->expr_type = s->type;
+        return;
+    }
     // For struct/union types, load the address instead of the value
     if (s->type && (s->type->kind == TY_STRUCT || s->type->kind == TY_UNION)) {
         if (s->offset > 0) {
@@ -165,14 +182,20 @@ static void load_var(Parser *p, Symbol *s) {
         }
     } else {
         char buf[256];
-        snprintf(buf, sizeof(buf), "rax, [%s]", s->name);
+        snprintf(buf, sizeof(buf), "mov rax, qword [%s]", s->name);
         emit_raw(p->gen, buf);
     }
     p->has_lvalue = (s->kind == SYM_VAR);
     p->lvalue_is_stack = (s->offset > 0);
+    p->lvalue_is_global = (s->offset <= 0 && s->kind == SYM_VAR);
     p->lvalue_base = REG_RBP;
     p->lvalue_offset = s->offset;
     p->lvalue_type = s->type;
+    p->lvalue_addr_slot = 0;
+    if (p->lvalue_is_global) {
+        strncpy(p->lvalue_name, s->name, sizeof(p->lvalue_name) - 1);
+        p->lvalue_name[sizeof(p->lvalue_name) - 1] = '\0';
+    }
 }
 
 static void store_to_lvalue(Parser *p) {
@@ -185,6 +208,10 @@ static void store_to_lvalue(Parser *p) {
     else src = op_reg(REG_RAX, SZ_QWORD);
     if (p->lvalue_is_stack) {
         emit_mov(p->gen, op_mem(REG_RBP, -(p->lvalue_offset), sz), src);
+    } else if (p->lvalue_is_global) {
+        char buf[256];
+        snprintf(buf, sizeof(buf), "mov qword [%s], rax", p->lvalue_name);
+        emit_raw(p->gen, buf);
     } else if (p->lvalue_addr_slot > 0) {
         /* Pointer-based lvalue: load address from saved stack slot */
         emit_mov(p->gen, op_reg(REG_R10, SZ_QWORD), op_mem(REG_RBP, -(p->lvalue_addr_slot), SZ_QWORD));
@@ -270,17 +297,13 @@ static Type *parse_type_spec(Parser *p) {
         if (peek(p).kind == TK_IDENT) {
             Token name = next(p);
             s = tok_str(&name);
-            // Look up existing struct type
-            Symbol *tag = sym_find(s);
-            if (tag && tag->kind == SYM_TAG) {
+            // Look up existing struct tag
+            Symbol *tag = sym_find_kind(s, SYM_TAG);
+            if (tag) {
                 ty = tag->type;
             } else {
                 ty = (t.kind == TK_STRUCT) ? ty_struct(s) : ty_union(s);
-                // Only declare SYM_TAG if no symbol with this name exists
-                // to avoid shadowing existing SYM_TYPEDEF
-                if (!tag) {
-                    sym_declare(xstrdup(s), SYM_TAG, ty);
-                }
+                sym_declare(xstrdup(s), SYM_TAG, ty);
             }
         } else {
             // Anonymous struct
@@ -388,7 +411,15 @@ static Type *parse_type_spec(Parser *p) {
         free(name);
         if (s && s->kind == SYM_TYPEDEF) {
             next(p);
-            return s->type;
+            /* If typedef points to a struct/union, look up the tag for the current definition */
+            Type *ty = s->type;
+            if (ty && (ty->kind == TY_STRUCT || ty->kind == TY_UNION) && ty->name) {
+                Symbol *tag = sym_find_kind(ty->name, SYM_TAG);
+                if (tag) {
+                    ty = tag->type;
+                }
+            }
+            return ty;
         }
         if (s && s->kind == SYM_TAG) {
             next(p);
@@ -630,6 +661,10 @@ static void parse_postfix(Parser *p) {
                     } else {
                         // For non-stack structs, compute address and load value
                         emit_add(p->gen, op_reg(REG_RAX, SZ_QWORD), op_imm(f->offset));
+                        /* Save field address to stack slot before loading value */
+                        p->local_offset = ((p->local_offset + 7) / 8) * 8 + 8;
+                        int addr_slot = p->local_offset;
+                        emit_mov(p->gen, op_mem(REG_RBP, -addr_slot, SZ_QWORD), op_reg(REG_RAX, SZ_QWORD));
                         OpSize sz = type_opsize(f->type);
                         if (sz == SZ_BYTE || sz == SZ_WORD) {
                             if (f->type->is_unsigned)
@@ -640,7 +675,12 @@ static void parse_postfix(Parser *p) {
                             emit_mov(p->gen, op_reg(REG_RAX, sz), op_mem(REG_RAX, 0, sz));
                         }
                         p->expr_type = f->type;
-                        p->has_lvalue = 0;
+                        p->has_lvalue = 1;
+                        p->lvalue_is_stack = 0;
+                        p->lvalue_base = REG_RAX;
+                        p->lvalue_offset = 0;
+                        p->lvalue_type = f->type;
+                        p->lvalue_addr_slot = addr_slot;
                     }
                 }
             }
@@ -654,6 +694,10 @@ static void parse_postfix(Parser *p) {
                 Member *f = find_field(p->expr_type->base, field_name);
                 if (f) {
                     emit_add(p->gen, op_reg(REG_RAX, SZ_QWORD), op_imm(f->offset));
+                    /* Save field address to stack slot before loading value */
+                    p->local_offset = ((p->local_offset + 7) / 8) * 8 + 8;
+                    int addr_slot = p->local_offset;
+                    emit_mov(p->gen, op_mem(REG_RBP, -addr_slot, SZ_QWORD), op_reg(REG_RAX, SZ_QWORD));
                     OpSize sz = type_opsize(f->type);
                     if (sz == SZ_BYTE || sz == SZ_WORD) {
                         if (f->type->is_unsigned)
@@ -664,7 +708,12 @@ static void parse_postfix(Parser *p) {
                         emit_mov(p->gen, op_reg(REG_RAX, sz), op_mem(REG_RAX, 0, sz));
                     }
                     p->expr_type = f->type;
-                    p->has_lvalue = 0;
+                    p->has_lvalue = 1;
+                    p->lvalue_is_stack = 0;
+                    p->lvalue_base = REG_RAX;
+                    p->lvalue_offset = 0;
+                    p->lvalue_type = f->type;
+                    p->lvalue_addr_slot = addr_slot;
                 }
             }
             free(field_name);
@@ -1137,6 +1186,9 @@ static void parse_assign(Parser *p) {
         Type *saved_type = p->lvalue_type;
         int saved_stack = p->lvalue_is_stack;
         int saved_addr_slot = p->lvalue_addr_slot;
+        int saved_global = p->lvalue_is_global;
+        char saved_name[256];
+        memcpy(saved_name, p->lvalue_name, sizeof(saved_name));
         parse_assign(p);
         // Restore lvalue info
         p->has_lvalue = saved_has;
@@ -1145,6 +1197,8 @@ static void parse_assign(Parser *p) {
         p->lvalue_type = saved_type;
         p->lvalue_is_stack = saved_stack;
         p->lvalue_addr_slot = saved_addr_slot;
+        p->lvalue_is_global = saved_global;
+        memcpy(p->lvalue_name, saved_name, sizeof(p->lvalue_name));
         // Store the value
         if (p->has_lvalue && !p->lvalue_is_stack && p->lvalue_addr_slot > 0) {
             /* Pointer-based lvalue: load address from saved stack slot */
@@ -1170,7 +1224,9 @@ static void parse_assign(Parser *p) {
         int saved_off = p->lvalue_offset;
         Type *saved_type = p->lvalue_type;
         int saved_stack = p->lvalue_is_stack;
+        int saved_addr_slot = p->lvalue_addr_slot;
         parse_assign(p);
+        p->lvalue_addr_slot = saved_addr_slot;
         emit_pop(p->gen, op_reg(REG_R10, SZ_QWORD));
         if (t.kind == TK_ADDASSIGN) emit_add(p->gen, op_reg(REG_R10, SZ_QWORD), op_reg(REG_RAX, SZ_QWORD));
         else if (t.kind == TK_SUBASSIGN) emit_sub(p->gen, op_reg(REG_R10, SZ_QWORD), op_reg(REG_RAX, SZ_QWORD));
@@ -1676,6 +1732,7 @@ void parse_translation_unit(Parser *p) {
             }
         } else {
             sym_declare(xstrdup(name_str), SYM_VAR, ty);
+            register_global(p, name_str, ty->size);
             if (peek(p).kind == TK_ASSIGN) next(p);
             if (peek(p).kind != TK_SEMICOLON) while (peek(p).kind != TK_SEMICOLON && peek(p).kind != TK_EOF) next(p);
             if (peek(p).kind == TK_SEMICOLON) next(p);
@@ -1701,31 +1758,45 @@ void parser_init(Parser *p, char *source, CodeGen *gen) {
     p->lvalue_type = NULL;
     p->lvalue_is_stack = 0;
     p->lvalue_addr_slot = 0;
+    p->lvalue_is_global = 0;
     p->string_count = 0;
+    p->global_count = 0;
 }
 
 char *parser_flush(Parser *p) {
     gen_flush(p->gen);
     char *code = gen_output(p->gen);
-    if (p->string_count == 0) return code;
     int code_len = strlen(code);
     int extra = 0;
     for (int i = 0; i < p->string_count; i++)
         extra += 64 + p->strings[i].len * 4;
+    extra += p->global_count * 64;
+    if (extra == 0) return code;
     char *out = xmalloc(code_len + extra + 64);
     memcpy(out, code, code_len);
     int pos = code_len;
-    pos += snprintf(out + pos, extra + 64, "\nsection .rodata\n");
-    for (int i = 0; i < p->string_count; i++) {
-        pos += snprintf(out + pos, extra + 64 - pos, "%s db ", p->strings[i].label);
-        if (p->strings[i].len == 0) {
-            pos += snprintf(out + pos, extra + 64 - pos, "0\n");
-        } else {
-            for (int j = 0; j < p->strings[i].len; j++) {
-                if (j > 0) out[pos++] = ',';
-                pos += snprintf(out + pos, 16, "%d", (unsigned char)p->strings[i].data[j]);
+    /* Emit .rodata section for string literals */
+    if (p->string_count > 0) {
+        pos += snprintf(out + pos, extra + 64 - pos, "\nsection .rodata\n");
+        for (int i = 0; i < p->string_count; i++) {
+            pos += snprintf(out + pos, extra + 64 - pos, "%s db ", p->strings[i].label);
+            if (p->strings[i].len == 0) {
+                pos += snprintf(out + pos, extra + 64 - pos, "0\n");
+            } else {
+                for (int j = 0; j < p->strings[i].len; j++) {
+                    if (j > 0) out[pos++] = ',';
+                    pos += snprintf(out + pos, 16, "%d", (unsigned char)p->strings[i].data[j]);
+                }
+                pos += snprintf(out + pos, extra + 64 - pos, ",0\n");
             }
-            pos += snprintf(out + pos, extra + 64 - pos, ",0\n");
+        }
+    }
+    /* Emit .bss section for global variables */
+    if (p->global_count > 0) {
+        pos += snprintf(out + pos, extra + 64 - pos, "\nsection .bss\n");
+        for (int i = 0; i < p->global_count; i++) {
+            int sz = p->globals[i].size > 0 ? p->globals[i].size : 8;
+            pos += snprintf(out + pos, extra + 64 - pos, "common %s %d\n", p->globals[i].name, sz);
         }
     }
     return out;

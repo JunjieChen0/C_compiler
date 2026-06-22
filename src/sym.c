@@ -105,6 +105,17 @@ Symbol *sym_find_current(char *name) {
     return scope_lookup(current_scope, name);
 }
 
+Symbol *sym_find_kind(char *name, SymbolKind kind) {
+    for (Scope *sc = current_scope; sc; sc = sc->parent) {
+        unsigned idx = hash(name) % SCOPE_BUCKET_COUNT;
+        for (Symbol *s = sc->table[idx]; s; s = s->next) {
+            if (strcmp(s->name, name) == 0 && s->kind == kind)
+                return s;
+        }
+    }
+    return NULL;
+}
+
 Symbol *sym_find_global(char *name) {
     Scope *sc = current_scope;
     if (!sc) return NULL;
