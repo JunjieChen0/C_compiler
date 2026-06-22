@@ -13,6 +13,61 @@ static int is_type_start(Parser *p);
 static Token next(Parser *p) { return lexer_next(&p->lexer); }
 static Token peek(Parser *p) { return lexer_peek(&p->lexer); }
 
+static Token expect(Parser *p, TokenKind kind);
+
+static int parse_constexpr_atom(Parser *p) {
+    Token t = peek(p);
+    if (t.kind == TK_INT) { next(p); return (int)t.ival; }
+    if (t.kind == TK_LPAREN) {
+        next(p);
+        int val = parse_constexpr_atom(p);
+        while (peek(p).kind == TK_STAR || peek(p).kind == TK_SLASH || peek(p).kind == TK_PERCENT ||
+               peek(p).kind == TK_PLUS || peek(p).kind == TK_MINUS) {
+            Token op = next(p);
+            int rhs = parse_constexpr_atom(p);
+            if (op.kind == TK_STAR) val *= rhs;
+            else if (op.kind == TK_SLASH) val /= rhs;
+            else if (op.kind == TK_PERCENT) val %= rhs;
+            else if (op.kind == TK_PLUS) val += rhs;
+            else if (op.kind == TK_MINUS) val -= rhs;
+        }
+        expect(p, TK_RPAREN);
+        return val;
+    }
+    if (t.kind == TK_SIZEOF) {
+        next(p);
+        if (peek(p).kind == TK_LPAREN) {
+            Lexer saved = p->lexer;
+            next(p);
+            if (is_type_start(p)) {
+                Type *ty = parse_type_spec(p);
+                while (peek(p).kind == TK_STAR) { next(p); ty = pointer_to(ty); }
+                expect(p, TK_RPAREN);
+                return ty->size;
+            }
+            p->lexer = saved;
+        }
+        return 8;
+    }
+    next(p);
+    return 0;
+}
+
+static int parse_constexpr(Parser *p) {
+    int val = parse_constexpr_atom(p);
+    while (peek(p).kind == TK_STAR || peek(p).kind == TK_SLASH || peek(p).kind == TK_PERCENT ||
+           peek(p).kind == TK_PLUS || peek(p).kind == TK_MINUS) {
+        Token op = next(p);
+        int rhs = parse_constexpr_atom(p);
+        if (op.kind == TK_STAR) val *= rhs;
+        else if (op.kind == TK_SLASH) val /= rhs;
+        else if (op.kind == TK_PERCENT) val %= rhs;
+        else if (op.kind == TK_PLUS) val += rhs;
+        else if (op.kind == TK_MINUS) val -= rhs;
+    }
+    return val;
+}
+
 static Token peek2(Parser *p) {
     Lexer saved = p->lexer;
     next(p); // skip first token
@@ -146,7 +201,7 @@ static int is_type_start(Parser *p) {
     Token t = peek(p);
     switch (t.kind) {
         case TK_VOID: case TK_CHAR_KW: case TK_SHORT: case TK_INT_KW:
-        case TK_LONG: case TK_FLOAT_KW: case TK_DOUBLE: case TK_BOOL:
+        case TK_LONG: case TK_LONG_KW: case TK_FLOAT_KW: case TK_DOUBLE: case TK_BOOL:
         case TK_SIGNED: case TK_UNSIGNED:
         case TK_STRUCT: case TK_UNION: case TK_ENUM:
         case TK_EXTERN: case TK_STATIC: case TK_CONST: case TK_VOLATILE:
@@ -217,7 +272,11 @@ static Type *parse_type_spec(Parser *p) {
                 ty = tag->type;
             } else {
                 ty = (t.kind == TK_STRUCT) ? ty_struct(s) : ty_union(s);
-                sym_declare(xstrdup(s), SYM_TAG, ty);
+                // Only declare SYM_TAG if no symbol with this name exists
+                // to avoid shadowing existing SYM_TYPEDEF
+                if (!tag) {
+                    sym_declare(xstrdup(s), SYM_TAG, ty);
+                }
             }
         } else {
             // Anonymous struct
@@ -324,6 +383,10 @@ static Type *parse_type_spec(Parser *p) {
         Symbol *s = sym_find(name);
         free(name);
         if (s && s->kind == SYM_TYPEDEF) {
+            next(p);
+            return s->type;
+        }
+        if (s && s->kind == SYM_TAG) {
             next(p);
             return s->type;
         }
@@ -702,7 +765,7 @@ static void parse_cast(Parser *p) {
         }
         p->lexer = saved;
     }
-    parse_postfix(p);
+    parse_unary(p);
 }
 
 static void parse_unary(Parser *p) {
@@ -783,7 +846,7 @@ static void parse_unary(Parser *p) {
         p->has_lvalue = 0;
         break;
     default:
-        parse_cast(p);
+        parse_postfix(p);
     }
 }
 
@@ -1005,7 +1068,7 @@ static void parse_cond(Parser *p) {
         int end_label = next_label(p);
         emit_cmp(p->gen, op_reg(REG_RAX, SZ_QWORD), op_imm(0));
         emit_je_id(p, else_label);
-        parse_primary(p);
+        parse_assign(p);
         expect(p, TK_COLON);
         emit_jmp_id(p, end_label);
         emit_label_id(p, else_label);
@@ -1097,9 +1160,14 @@ static void parse_var_decl(Parser *p, Type *base_type) {
     char *name_str = tok_str(&name);
     while (peek(p).kind == TK_LBRACKET) {
         next(p);
-        Token len = expect(p, TK_INT);
-        expect(p, TK_RBRACKET);
-        ty = ty_array(ty, (int)len.ival);
+        if (peek(p).kind == TK_RBRACKET) {
+            next(p);
+            ty = pointer_to(ty);
+        } else {
+            int len = parse_constexpr(p);
+            expect(p, TK_RBRACKET);
+            ty = ty_array(ty, len);
+        }
     }
     int align = ty->align;
     if (align < 1) align = 1;
@@ -1109,40 +1177,52 @@ static void parse_var_decl(Parser *p, Type *base_type) {
     int var_offset = p->local_offset;  // Save variable's offset
     if (peek(p).kind == TK_ASSIGN) {
         next(p);
-        parse_expr(p);
-        // Handle struct/union assignment by copying
-        if (p->has_lvalue && p->lvalue_is_stack && 
-            (ty->kind == TY_STRUCT || ty->kind == TY_UNION)) {
-            // Copy struct from source to destination
-            int src_offset = p->lvalue_offset;
-            int dst_offset = var_offset;
-            int size = ty->size;
-            // Copy in 8-byte chunks
-            for (int i = 0; i < size; i += 8) {
-                int chunk = size - i;
-                if (chunk > 8) chunk = 8;
-                if (chunk == 8) {
-                    emit_mov(p->gen, op_reg(REG_R10, SZ_QWORD), op_mem(REG_RBP, -(src_offset - i), SZ_QWORD));
-                    emit_mov(p->gen, op_mem(REG_RBP, -(dst_offset - i), SZ_QWORD), op_reg(REG_R10, SZ_QWORD));
-                } else if (chunk == 4) {
-                    emit_mov(p->gen, op_reg(REG_R10, SZ_DWORD), op_mem(REG_RBP, -(src_offset - i), SZ_DWORD));
-                    emit_mov(p->gen, op_mem(REG_RBP, -(dst_offset - i), SZ_DWORD), op_reg(REG_R10, SZ_DWORD));
-                } else if (chunk == 2) {
-                    emit_mov(p->gen, op_reg(REG_R10, SZ_WORD), op_mem(REG_RBP, -(src_offset - i), SZ_WORD));
-                    emit_mov(p->gen, op_mem(REG_RBP, -(dst_offset - i), SZ_WORD), op_reg(REG_R10, SZ_WORD));
-                } else {
-                    emit_mov(p->gen, op_reg(REG_R10, SZ_BYTE), op_mem(REG_RBP, -(src_offset - i), SZ_BYTE));
-                    emit_mov(p->gen, op_mem(REG_RBP, -(dst_offset - i), SZ_BYTE), op_reg(REG_R10, SZ_BYTE));
-                }
+        if (peek(p).kind == TK_LBRACE) {
+            // Skip compound initializer: {expr, expr, ...}
+            next(p);
+            int depth = 1;
+            while (depth > 0 && peek(p).kind != TK_EOF) {
+                if (peek(p).kind == TK_LBRACE) depth++;
+                else if (peek(p).kind == TK_RBRACE) depth--;
+                if (depth > 0) next(p);
             }
+            if (peek(p).kind == TK_RBRACE) next(p);
         } else {
-            OpSize sz = type_opsize(ty);
-            Operand src;
-            if (sz == SZ_BYTE) src = op_reg(REG_RAX, SZ_BYTE);
-            else if (sz == SZ_WORD) src = op_reg(REG_RAX, SZ_WORD);
-            else if (sz == SZ_DWORD) src = op_reg(REG_RAX, SZ_DWORD);
-            else src = op_reg(REG_RAX, SZ_QWORD);
-            emit_mov(p->gen, op_mem(REG_RBP, -(var_offset), sz), src);
+            parse_expr(p);
+            // Handle struct/union assignment by copying
+            if (p->has_lvalue && p->lvalue_is_stack && 
+                (ty->kind == TY_STRUCT || ty->kind == TY_UNION)) {
+                // Copy struct from source to destination
+                int src_offset = p->lvalue_offset;
+                int dst_offset = var_offset;
+                int size = ty->size;
+                // Copy in 8-byte chunks
+                for (int i = 0; i < size; i += 8) {
+                    int chunk = size - i;
+                    if (chunk > 8) chunk = 8;
+                    if (chunk == 8) {
+                        emit_mov(p->gen, op_reg(REG_R10, SZ_QWORD), op_mem(REG_RBP, -(src_offset - i), SZ_QWORD));
+                        emit_mov(p->gen, op_mem(REG_RBP, -(dst_offset - i), SZ_QWORD), op_reg(REG_R10, SZ_QWORD));
+                    } else if (chunk == 4) {
+                        emit_mov(p->gen, op_reg(REG_R10, SZ_DWORD), op_mem(REG_RBP, -(src_offset - i), SZ_DWORD));
+                        emit_mov(p->gen, op_mem(REG_RBP, -(dst_offset - i), SZ_DWORD), op_reg(REG_R10, SZ_DWORD));
+                    } else if (chunk == 2) {
+                        emit_mov(p->gen, op_reg(REG_R10, SZ_WORD), op_mem(REG_RBP, -(src_offset - i), SZ_WORD));
+                        emit_mov(p->gen, op_mem(REG_RBP, -(dst_offset - i), SZ_WORD), op_reg(REG_R10, SZ_WORD));
+                    } else {
+                        emit_mov(p->gen, op_reg(REG_R10, SZ_BYTE), op_mem(REG_RBP, -(src_offset - i), SZ_BYTE));
+                        emit_mov(p->gen, op_mem(REG_RBP, -(dst_offset - i), SZ_BYTE), op_reg(REG_R10, SZ_BYTE));
+                    }
+                }
+            } else {
+                OpSize sz = type_opsize(ty);
+                Operand src;
+                if (sz == SZ_BYTE) src = op_reg(REG_RAX, SZ_BYTE);
+                else if (sz == SZ_WORD) src = op_reg(REG_RAX, SZ_WORD);
+                else if (sz == SZ_DWORD) src = op_reg(REG_RAX, SZ_DWORD);
+                else src = op_reg(REG_RAX, SZ_QWORD);
+                emit_mov(p->gen, op_mem(REG_RBP, -(var_offset), sz), src);
+            }
         }
     }
     free(name_str);
@@ -1367,6 +1447,19 @@ static void parse_func(Parser *p, Type *ret_type, char *name) {
                 Token pname_tok = next(p);
                 pname = tok_str(&pname_tok);
             }
+            // Handle array parameters: int foo(int arr[]) => int foo(int *arr)
+            while (peek(p).kind == TK_LBRACKET) {
+                next(p);
+                if (peek(p).kind == TK_RBRACKET) {
+                    next(p);
+                    pty = pointer_to(pty);
+                } else {
+                    // Array with size - skip the size expression
+                    while (peek(p).kind != TK_RBRACKET && peek(p).kind != TK_EOF) next(p);
+                    if (peek(p).kind == TK_RBRACKET) next(p);
+                    pty = pointer_to(pty);
+                }
+            }
             param_types = xrealloc(param_types, sizeof(Type*) * (param_count + 1));
             param_names = xrealloc(param_names, sizeof(char*) * (param_count + 1));
             param_types[param_count] = pty;
@@ -1511,6 +1604,18 @@ void parse_translation_unit(Parser *p) {
                         Type *pty = parse_type_spec(p);
                         while (peek(p).kind == TK_STAR) { next(p); pty = pointer_to(pty); }
                         if (peek(p).kind == TK_IDENT) next(p); // skip param name
+                        // Handle array parameters in prototypes
+                        while (peek(p).kind == TK_LBRACKET) {
+                            next(p);
+                            if (peek(p).kind == TK_RBRACKET) {
+                                next(p);
+                                pty = pointer_to(pty);
+                            } else {
+                                while (peek(p).kind != TK_RBRACKET && peek(p).kind != TK_EOF) next(p);
+                                if (peek(p).kind == TK_RBRACKET) next(p);
+                                pty = pointer_to(pty);
+                            }
+                        }
                         param_types = xrealloc(param_types, sizeof(Type*) * (param_count + 1));
                         param_types[param_count++] = pty;
                     } while (peek(p).kind == TK_COMMA && (next(p), 1));

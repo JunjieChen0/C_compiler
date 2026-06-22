@@ -7,6 +7,8 @@
 #include <stdarg.h>
 #include <stdint.h>
 
+#define NULL ((void *)0)
+
 typedef struct {
     char *data;
     int len;

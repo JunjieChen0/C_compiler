@@ -185,6 +185,22 @@ static int eval_const_expr(const char *expr) {
 
 static char *preprocess_internal(char *source, int depth);
 
+static char *normalize_source(char *src) {
+    int len = strlen(src);
+    char *out = xmalloc(len + 1);
+    int j = 0;
+    for (int i = 0; src[i]; i++) {
+        if (src[i] == '\r' && src[i + 1] == '\n') {
+            out[j++] = '\n';
+            i++;
+        } else {
+            out[j++] = src[i];
+        }
+    }
+    out[j] = '\0';
+    return out;
+}
+
 char *preprocess(char *source, const char *filename) {
     current_filename = filename;
     macros = NULL;
@@ -195,7 +211,10 @@ char *preprocess(char *source, const char *filename) {
     define_macro("_WIN64", "1", 1);
     define_macro("_MSC_VER", "1900", 1);
 
-    return preprocess_internal(source, 0);
+    char *normalized = normalize_source(source);
+    char *result = preprocess_internal(normalized, 0);
+    free(normalized);
+    return result;
 }
 
 static char *preprocess_internal(char *source, int depth) {
@@ -212,6 +231,7 @@ static char *preprocess_internal(char *source, int depth) {
         if (*p == '#') {
             p++;
 
+            fprintf(stderr, "DEBUG: found #, next='%c'(%d)\n", *p, (int)*p);
             if (*p == '#') {
                 p++;
                 skip_whitespace(&p);
@@ -220,14 +240,15 @@ static char *preprocess_internal(char *source, int depth) {
 
             skip_whitespace(&p);
 
-            char directive[MAX_NAME];
-            if (!read_directive_name(&p, directive)) {
-                if (out_len < MAX_OUTPUT - 1)
-                    output[out_len++] = '#';
-                continue;
-            }
+                char directive[MAX_NAME];
+                if (!read_directive_name(&p, directive)) {
+                    if (out_len < MAX_OUTPUT - 1)
+                        output[out_len++] = '#';
+                    continue;
+                }
 
-            if (strcmp(directive, "include") == 0) {
+                fprintf(stderr, "DEBUG: directive='%s'\n", directive);
+                if (strcmp(directive, "include") == 0) {
                 skip_whitespace(&p);
                 int is_angle = 0;
                 char path[MAX_PATH];
@@ -267,6 +288,7 @@ static char *preprocess_internal(char *source, int depth) {
                 char name[MAX_NAME];
                 read_ident(&p, name);
 
+                fprintf(stderr, "DEBUG: define name='%s' next_char='%c'(%d)\n", name, *p, (int)*p);
                 if (*p == '(') {
                     p++;
                     char *params[MAX_MACRO_PARAMS];
@@ -285,18 +307,25 @@ static char *preprocess_internal(char *source, int depth) {
                     }
                     if (*p == ')') p++;
 
-                    skip_whitespace(&p);
-                    char body[MAX_MACRO_BODY];
-                    int bi = 0;
-                    while (*p && *p != '\n' && bi < MAX_MACRO_BODY - 1) {
-                        body[bi++] = *p++;
+                skip_whitespace(&p);
+                char body[MAX_MACRO_BODY];
+                int bi = 0;
+                while (*p && *p != '\n' && bi < MAX_MACRO_BODY - 1) {
+                    if (*p == '\\' && p[1] == '\n') {
+                        p += 2;
+                        continue;
                     }
-                    body[bi] = '\0';
-                    while (bi > 0 && (body[bi-1] == ' ' || body[bi-1] == '\t'))
-                        body[--bi] = '\0';
-                    if (*p == '\n') p++;
+                    body[bi++] = *p++;
+                }
+                body[bi] = '\0';
 
-                    define_func_macro(name, (const char **)params, num_params, body, 0);
+                while (bi > 0 && (body[bi-1] == ' ' || body[bi-1] == '\t'))
+                    body[--bi] = '\0';
+
+                if (*p == '\n') p++;
+
+                fprintf(stderr, "DEBUG: func_macro body='%s'\n", body);
+                define_func_macro(name, (const char **)params, num_params, body, 0);
                     for (int i = 0; i < num_params; i++) free(params[i]);
                     continue;
                 }
@@ -647,8 +676,9 @@ static char *preprocess_internal(char *source, int depth) {
                 if (*p == '\\') {
                     if (out_len < MAX_OUTPUT - 1)
                         output[out_len++] = *p++;
-                }
-                if (*p && *p != quote) {
+                    if (*p && out_len < MAX_OUTPUT - 1)
+                        output[out_len++] = *p++;
+                } else {
                     if (out_len < MAX_OUTPUT - 1)
                         output[out_len++] = *p++;
                 }

@@ -14,7 +14,7 @@ static struct { const char *word; TokenKind kind; } keywords[] = {
     {"unsigned", TK_UNSIGNED}, {"void", TK_VOID}, {"volatile", TK_VOLATILE},
     {"while", TK_WHILE}, {"_Bool", TK_BOOL}, {"_Complex", TK_COMPLEX},
     {"_Imaginary", TK_IMAGINARY},
-    {NULL, TK_EOF}
+    {((void *)0), TK_EOF}
 };
 
 static TokenKind check_keyword(const char *start, int len) {
@@ -60,7 +60,7 @@ void lexer_init(Lexer *l, char *source) {
     l->start = source;
     l->current = source;
     l->line = 1;
-    l->token = (Token){TK_EOF, NULL, 0, 0, 0, NULL, 0, 1};
+    l->token = (Token){TK_EOF, ((void *)0), 0, 0, 0, ((void *)0), 0, 1};
 }
 
 static void skip_whitespace(Lexer *l) {
@@ -126,7 +126,7 @@ static Token read_number(Lexer *l) {
             if (*l->current == '+' || *l->current == '-') l->current++;
             while (is_digit(*l->current)) l->current++;
         }
-        tok.fval = strtod(tok.start, NULL);
+        tok.fval = strtod(tok.start, ((void *)0));
         if (*l->current == 'f' || *l->current == 'F') l->current++;
     } else {
         tok.ival = val;
@@ -205,7 +205,7 @@ Token lexer_next(Lexer *l) {
     int line = l->line;
 
     if (c == '\0') {
-        l->token = (Token){TK_EOF, l->current, 0, 0, 0, NULL, 0, line};
+        l->token = (Token){TK_EOF, l->current, 0, 0, 0, ((void *)0), 0, line};
         return l->token;
     }
 

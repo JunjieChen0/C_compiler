@@ -2,7 +2,20 @@
 *.exe
 *.o
 *.obj
+
+# Generated assembly
 *.s
 
-# Keep test assembly files
-!tests/programs/*.s
+# Preprocessor output
+*.i
+
+# Windows artifacts
+nul
+
+# Self-hosting debug directory
+selfhost/
+
+# IDE / editor
+.vscode/
+*.swp
+*~
