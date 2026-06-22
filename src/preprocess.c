@@ -202,7 +202,6 @@ static char *normalize_source(char *src) {
 }
 
 char *preprocess(char *source, const char *filename) {
-    fprintf(stderr, "PP0\n");
     current_filename = filename;
     macros = NULL;
 
@@ -211,18 +210,14 @@ char *preprocess(char *source, const char *filename) {
     define_macro("__x86_64__", "1", 1);
     define_macro("_WIN64", "1", 1);
     define_macro("_MSC_VER", "1900", 1);
-    fprintf(stderr, "PP1\n");
 
     char *normalized = normalize_source(source);
-    fprintf(stderr, "PP2\n");
     char *result = preprocess_internal(normalized, 0);
-    fprintf(stderr, "PP3\n");
     free(normalized);
     return result;
 }
 
 static char *preprocess_internal(char *source, int depth) {
-    fprintf(stderr, "PI0 d=%d\n", depth);
     if (depth > MAX_INCLUDE_DEPTH) {
         error("maximum include depth exceeded");
     }
@@ -236,7 +231,6 @@ static char *preprocess_internal(char *source, int depth) {
         if (*p == '#') {
             p++;
 
-            fprintf(stderr, "DEBUG: found #, next='%c'(%d)\n", *p, (int)*p);
             if (*p == '#') {
                 p++;
                 skip_whitespace(&p);
@@ -252,7 +246,6 @@ static char *preprocess_internal(char *source, int depth) {
                     continue;
                 }
 
-                fprintf(stderr, "DEBUG: directive='%s'\n", directive);
                 if (strcmp(directive, "include") == 0) {
                 skip_whitespace(&p);
                 int is_angle = 0;
@@ -293,7 +286,6 @@ static char *preprocess_internal(char *source, int depth) {
                 char name[MAX_NAME];
                 read_ident(&p, name);
 
-                fprintf(stderr, "DEBUG: define name='%s' next_char='%c'(%d)\n", name, *p, (int)*p);
                 if (*p == '(') {
                     p++;
                     char *params[MAX_MACRO_PARAMS];
@@ -329,7 +321,6 @@ static char *preprocess_internal(char *source, int depth) {
 
                 if (*p == '\n') p++;
 
-                fprintf(stderr, "DEBUG: func_macro body='%s'\n", body);
                 define_func_macro(name, (const char **)params, num_params, body, 0);
                     for (int i = 0; i < num_params; i++) free(params[i]);
                     continue;

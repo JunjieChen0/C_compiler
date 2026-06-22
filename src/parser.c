@@ -151,7 +151,7 @@ static void load_var(Parser *p, Symbol *s) {
         return;
     }
     // For struct/union types, load the address instead of the value
-    if (s->type && (s->type->kind == TY_STRUCT || s->type->kind == TY_UNION)) {
+    if (s->type && (s->type->kind == TY_STRUCT || s->type->kind == TY_UNION || s->type->kind == TY_ARRAY)) {
         if (s->offset > 0) {
             emit_lea(p->gen, op_reg(REG_RAX, SZ_QWORD), op_mem(REG_RBP, -(s->offset), SZ_QWORD));
         } else {
@@ -164,7 +164,12 @@ static void load_var(Parser *p, Symbol *s) {
         p->lvalue_base = REG_RBP;
         p->lvalue_offset = s->offset;
         p->lvalue_type = s->type;
-        p->expr_type = s->type;
+        /* Array decays to pointer to element type */
+        if (s->type->kind == TY_ARRAY && s->type->base) {
+            p->expr_type = pointer_to(s->type->base);
+        } else {
+            p->expr_type = s->type;
+        }
         return;
     }
     OpSize sz = type_opsize(s->type);
@@ -591,12 +596,11 @@ static void parse_postfix(Parser *p) {
                 } while (peek(p).kind == TK_COMMA && (next(p), 1));
             }
             expect(p, TK_RPAREN);
-            /* Allocate 32-byte shadow space AFTER argument parsing
-               (so nested calls in arguments manage their own shadow space) */
-            emit_sub(p->gen, op_reg(REG_RSP, SZ_QWORD), op_imm(32));
             static const Register arg_regs2[] = {REG_RCX, REG_RDX, REG_R8, REG_R9};
             for (int i = (nargs < 4 ? nargs : 4) - 1; i >= 0; i--)
                 emit_pop(p->gen, op_reg(arg_regs2[i], SZ_QWORD));
+            /* Allocate 32-byte shadow space AFTER popping args into registers */
+            emit_sub(p->gen, op_reg(REG_RSP, SZ_QWORD), op_imm(32));
             emit_call(p->gen, func_name);
             /* Clean up: shadow space (32) + remaining stack args */
             int cleanup = 32 + (nargs > 4 ? (nargs - 4) * 8 : 0);
