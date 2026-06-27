@@ -21,11 +21,11 @@ jobs:
 
       - name: Build compiler
         shell: msys2 {0}
-        run: mingw32-make cc
+        run: make cc
 
       - name: Run unit tests
         shell: msys2 {0}
-        run: mingw32-make test_lexer test_type test_sym test_gen test_preprocess test_pe
+        run: make test_lexer test_type test_sym test_gen test_preprocess test_pe
 
       - name: Run integration tests
         shell: msys2 {0}
