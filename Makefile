@@ -28,8 +28,8 @@ test_sym: tests/test_sym.c src/sym.c src/type.c src/utils.c
 	$(CC) $(CFLAGS) -o tests/test_sym.exe tests/test_sym.c src/sym.c src/type.c src/utils.c
 	tests/test_sym.exe
 
-test_gen: tests/test_gen.c src/gen.c src/utils.c src/common.c
-	$(CC) $(CFLAGS) -o tests/test_gen.exe tests/test_gen.c src/gen.c src/utils.c src/common.c
+test_gen: tests/test_gen.c src/gen.c src/utils.c
+	$(CC) $(CFLAGS) -o tests/test_gen.exe tests/test_gen.c src/gen.c src/utils.c
 	tests/test_gen.exe
 
 test_preprocess: tests/test_preprocess.c src/preprocess.c src/lexer.c src/utils.c
