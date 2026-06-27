@@ -112,6 +112,48 @@ static void test_nested_ifdef() {
     free(result);
 }
 
+static void test_nested_object_macro() {
+    char input[] = "#define A B\n#define B 42\nint x = A;\n";
+    char *result = preprocess(input, "test.c");
+    ASSERT_STR_EQ(result, "int x = 42;\n");
+    free(result);
+}
+
+static void test_chained_object_macro() {
+    char input[] = "#define A B\n#define B C\n#define C 99\nint x = A;\n";
+    char *result = preprocess(input, "test.c");
+    ASSERT_STR_EQ(result, "int x = 99;\n");
+    free(result);
+}
+
+static void test_elif_basic() {
+    char input[] = "#if 0\nA\n#elif 1\nB\n#endif\n";
+    char *result = preprocess(input, "test.c");
+    ASSERT_STR_EQ(result, "B\n");
+    free(result);
+}
+
+static void test_elif_false() {
+    char input[] = "#if 0\nA\n#elif 0\nB\n#endif\n";
+    char *result = preprocess(input, "test.c");
+    ASSERT_STR_EQ(result, "");
+    free(result);
+}
+
+static void test_elif_chain() {
+    char input[] = "#if 0\nA\n#elif 0\nB\n#elif 1\nC\n#elif 1\nD\n#endif\n";
+    char *result = preprocess(input, "test.c");
+    ASSERT_STR_EQ(result, "C\n");
+    free(result);
+}
+
+static void test_elif_then_else() {
+    char input[] = "#if 0\nA\n#elif 0\nB\n#else\nC\n#endif\n";
+    char *result = preprocess(input, "test.c");
+    ASSERT_STR_EQ(result, "C\n");
+    free(result);
+}
+
 int main() {
     set_current_file("test.c");
     set_current_input("");
@@ -128,6 +170,12 @@ int main() {
     TEST(test_macro_in_string_not_expanded);
     TEST(test_undef);
     TEST(test_nested_ifdef);
+    TEST(test_nested_object_macro);
+    TEST(test_chained_object_macro);
+    TEST(test_elif_basic);
+    TEST(test_elif_false);
+    TEST(test_elif_chain);
+    TEST(test_elif_then_else);
 
     printf("\n%d passed, %d failed\n", tests_passed, tests_failed);
     return tests_failed > 0 ? 1 : 0;

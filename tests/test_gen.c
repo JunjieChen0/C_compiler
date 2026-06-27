@@ -90,7 +90,7 @@ static void test_simple_func(void) {
     gen_init(&gen);
 
     TEST("emit simple function");
-    gen_func_begin(&gen, "add", 2);
+    gen_func_begin(&gen, "add", 2, 0);
     emit_prologue(&gen, 16);
     emit_mov(&gen, op_reg(REG_RAX, SZ_QWORD), op_reg(REG_RDI, SZ_QWORD));
     emit_add(&gen, op_reg(REG_RAX, SZ_QWORD), op_reg(REG_RSI, SZ_QWORD));
@@ -117,7 +117,7 @@ static void test_branches(void) {
     gen_init(&gen);
 
     TEST("emit branches");
-    gen_func_begin(&gen, "test_branch", 1);
+    gen_func_begin(&gen, "test_branch", 1, 0);
     emit_prologue(&gen, 0);
     emit_cmp(&gen, op_reg(REG_RDI, SZ_QWORD), op_imm(0));
     emit_je(&gen, ".L0");
@@ -147,7 +147,7 @@ static void test_memory_ops(void) {
     gen_init(&gen);
 
     TEST("emit memory operations");
-    gen_func_begin(&gen, "mem_test", 0);
+    gen_func_begin(&gen, "mem_test", 0, 0);
     emit_prologue(&gen, 16);
     emit_mov(&gen, op_mem(REG_RBP, -4, SZ_DWORD), op_imm(42));
     emit_mov(&gen, op_reg(REG_RAX, SZ_DWORD), op_mem(REG_RBP, -4, SZ_DWORD));
@@ -170,7 +170,7 @@ static void test_call_convention(void) {
     gen_init(&gen);
 
     TEST("emit function call");
-    gen_func_begin(&gen, "caller", 2);
+    gen_func_begin(&gen, "caller", 2, 0);
     emit_prologue(&gen, 0);
     emit_mov(&gen, op_reg(REG_RDI, SZ_QWORD), op_reg(REG_RAX, SZ_QWORD));
     emit_call(&gen, "callee");
@@ -192,7 +192,7 @@ static void test_bitwise(void) {
     gen_init(&gen);
 
     TEST("emit bitwise ops");
-    gen_func_begin(&gen, "bits", 2);
+    gen_func_begin(&gen, "bits", 2, 0);
     emit_prologue(&gen, 0);
     emit_and(&gen, op_reg(REG_RDI, SZ_QWORD), op_reg(REG_RSI, SZ_QWORD));
     emit_or(&gen, op_reg(REG_RDI, SZ_QWORD), op_reg(REG_RSI, SZ_QWORD));
@@ -220,7 +220,7 @@ static void test_setcc(void) {
     gen_init(&gen);
 
     TEST("emit setcc");
-    gen_func_begin(&gen, "cmp_test", 2);
+    gen_func_begin(&gen, "cmp_test", 2, 0);
     emit_prologue(&gen, 0);
     emit_cmp(&gen, op_reg(REG_RDI, SZ_QWORD), op_reg(REG_RSI, SZ_QWORD));
     emit_setl(&gen, op_reg(REG_RAX, SZ_BYTE));

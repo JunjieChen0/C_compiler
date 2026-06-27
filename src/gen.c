@@ -27,14 +27,12 @@ static const char *size_prefix[] = {
 };
 
 void gen_init(CodeGen *gen) {
-    gen->funcs = NULL;
-    gen->func_count = 0;
-    gen->func_cap = 0;
+    /* Zero struct fields individually to avoid memset issues */
+    char *p = (char *)gen;
+    int i;
+    for (i = 0; i < (int)sizeof(CodeGen); i++) p[i] = 0;
     gen->output = string_new("");
-    gen->externs = NULL;
-    gen->extern_count = 0;
-    gen->extern_cap = 0;
-    memset(reg_used, 0, sizeof(reg_used));
+    for (i = 0; i < REG_COUNT; i++) reg_used[i] = 0;
 }
 
 void gen_free(CodeGen *gen) {
@@ -268,6 +266,7 @@ void gen_flush(CodeGen *gen) {
             gen->output = str_append_cstr(gen->output, buf);
         }
     }
+    gen->output = str_append_cstr(gen->output, "extern ___chkstk_ms\n");
     gen->output = str_append_cstr(gen->output, "default rel\nsection .text\n");
 
     for (int i = 0; i < gen->func_count; i++) {

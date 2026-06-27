@@ -1606,36 +1606,58 @@ static void parse_func(Parser *p, Type *ret_type, char *name, int is_static) {
     emit_ret(p->gen);
     gen_func_end(p->gen);
     Function *f = &p->gen->funcs[p->gen->func_count - 1];
-    Instr *prologue[4];
+    Instr *prologue[6];
     int npro = 0;
     Instr pi;
     memset(&pi, 0, sizeof(pi));
     pi.kind = I_PUSH; pi.dst = op_reg(REG_RBP, SZ_QWORD);
-    prologue[npro] = xmalloc(sizeof(Instr)); *prologue[npro++] = pi;
+    prologue[npro] = xmalloc(sizeof(Instr)); memcpy(prologue[npro], &pi, sizeof(Instr)); npro++;
     pi.kind = I_MOV; pi.dst = op_reg(REG_RBP, SZ_QWORD); pi.src = op_reg(REG_RSP, SZ_QWORD);
-    prologue[npro] = xmalloc(sizeof(Instr)); *prologue[npro++] = pi;
+    prologue[npro] = xmalloc(sizeof(Instr)); memcpy(prologue[npro], &pi, sizeof(Instr)); npro++;
+    if (frame_size > 4096) {
+        /* Windows x64 stack probing for large frames */
+        char probe_buf[64];
+        Instr probe1;
+        memset(&probe1, 0, sizeof(Instr));
+        probe1.kind = I_RAW;
+        snprintf(probe_buf, sizeof(probe_buf), "mov rax, %d", frame_size);
+        strncpy(probe1.dst.label, probe_buf, sizeof(probe1.dst.label) - 1);
+        prologue[npro] = xmalloc(sizeof(Instr)); memcpy(prologue[npro], &probe1, sizeof(Instr)); npro++;
+        Instr probe2;
+        memset(&probe2, 0, sizeof(Instr));
+        probe2.kind = I_RAW;
+        strncpy(probe2.dst.label, "call ___chkstk_ms", sizeof(probe2.dst.label) - 1);
+        prologue[npro] = xmalloc(sizeof(Instr)); memcpy(prologue[npro], &probe2, sizeof(Instr)); npro++;
+    }
     if (frame_size > 0) {
         pi.kind = I_SUB; pi.dst = op_reg(REG_RSP, SZ_QWORD); pi.src = op_imm(frame_size);
-        prologue[npro] = xmalloc(sizeof(Instr)); *prologue[npro++] = pi;
+        prologue[npro] = xmalloc(sizeof(Instr)); memcpy(prologue[npro], &pi, sizeof(Instr)); npro++;
     }
-    for (int i = 0; i < npro - 1; i++) prologue[i]->next = prologue[i + 1];
-    prologue[npro - 1]->next = f->head;
-    f->head = prologue[0];
-    if (!f->tail) f->tail = prologue[npro - 1];
-    // Save register parameters to stack
-    static const Register param_regs[] = {REG_RCX, REG_RDX, REG_R8, REG_R9};
-    for (int i = 0; i < param_count && i < 4; i++) {
+    {int i; for (i = 0; i < npro - 1; i++) prologue[i]->next = prologue[i + 1];}
+    {Instr *old_head;
+    memcpy(&old_head, &f->head, sizeof(Instr *));
+    prologue[npro - 1]->next = old_head;
+    memcpy(&f->head, &prologue[0], sizeof(Instr *));
+    if (!old_head) memcpy(&f->tail, &prologue[npro - 1], sizeof(Instr *));}
+    // Save register parameters to stack AFTER stack probing
+    {static const Register param_regs[] = {REG_RCX, REG_RDX, REG_R8, REG_R9};
+    int i;
+    Instr *last_pro = prologue[npro - 1];
+    for (i = 0; i < param_count && i < 4; i++) {
         int offset = (i + 1) * 8;
         Instr si;
-        memset(&si, 0, sizeof(si));
+        memset(&si, 0, sizeof(Instr));
         si.kind = I_MOV;
         si.dst = op_mem(REG_RBP, -offset, SZ_QWORD);
         si.src = op_reg(param_regs[i], SZ_QWORD);
         Instr *store = xmalloc(sizeof(Instr));
-        *store = si;
-        store->next = f->head->next->next;
-        f->head->next->next = store;
-    }
+        memcpy(store, &si, sizeof(Instr));
+        Instr *old_next;
+        memcpy(&old_next, &last_pro->next, sizeof(Instr *));
+        store->next = old_next;
+        memcpy(&last_pro->next, &store, sizeof(Instr *));
+        last_pro = store;
+    }}
     scope_pop();
     free(name);
 }
@@ -1668,6 +1690,19 @@ void parse_translation_unit(Parser *p) {
         }
         Token name = expect(p, TK_IDENT);
         char *name_str = tok_str(&name);
+        // Handle array brackets for global/static variables
+        while (peek(p).kind == TK_LBRACKET) {
+            next(p);
+            if (peek(p).kind == TK_RBRACKET) {
+                next(p);
+                ty = ty_array(ty, 0);
+            } else {
+                Token size_tok = next(p);
+                int size = (int)size_tok.ival;
+                expect(p, TK_RBRACKET);
+                ty = ty_array(ty, size);
+            }
+        }
         if (peek(p).kind == TK_LPAREN) {
             // Check if this is a function prototype (no body)
             Lexer saved = p->lexer;

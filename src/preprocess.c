@@ -459,60 +459,127 @@ static char *preprocess_internal(char *source, int depth) {
                     }
                     p++;
                 }
-            } else if (strcmp(directive, "if") == 0) {
-                skip_whitespace(&p);
-                char expr[256];
-                int ei = 0;
-                while (*p && *p != '\n' && ei < 255) {
-                    expr[ei++] = *p++;
-                }
-                expr[ei] = '\0';
-                if (*p == '\n') p++;
-
-                int cond = eval_const_expr(expr);
-                int depth2 = 1;
-                const char *start = p;
-
-                while (*p && depth2 > 0) {
-                    if (*p == '#') {
-                        const char *q = p + 1;
-                        while (*q == ' ' || *q == '\t') q++;
-                        char d[MAX_NAME];
-                        int qi = 0;
-                        while (is_alnum(*q) && qi < MAX_NAME - 1)
-                            d[qi++] = *q++;
-                        d[qi] = '\0';
-
-                        if (strcmp(d, "if") == 0 || strcmp(d, "ifdef") == 0 || strcmp(d, "ifndef") == 0)
-                            depth2++;
-                        else if (strcmp(d, "endif") == 0) {
-                            depth2--;
-                            if (depth2 == 0) {
-                                if (cond) {
-                                    int block_len = (int)(p - start);
-                                    char *block = xmalloc(block_len + 1);
-                                    memcpy(block, start, block_len);
-                                    block[block_len] = '\0';
-
-                                    char *expanded = preprocess_internal(block, depth + 1);
-                                    int elen = strlen(expanded);
-                                    if (out_len + elen < MAX_OUTPUT) {
-                                        memcpy(output + out_len, expanded, elen);
-                                        out_len += elen;
-                                    }
-                                    free(expanded);
-                                    free(block);
-                                }
-                                p = q;
-                                skip_to_eol(&p);
-                                if (*p == '\n') p++;
-                                break;
+                    } else if (strcmp(directive, "if") == 0) {
+        skip_whitespace(&p);
+        char expr[256];
+        int ei = 0;
+        while (*p && *p != '\n' && ei < 255) {
+            expr[ei++] = *p++;
+        }
+        expr[ei] = '\0';
+        if (*p == '\n') p++;
+        int cond = eval_const_expr(expr);
+        int found_true = cond;
+        int depth2 = 1;
+        const char *start = p;
+        const char *block_start = cond ? start : NULL;
+        while (*p && depth2 > 0) {
+            if (*p == '#') {
+                const char *q = p + 1;
+                while (*q == ' ' || *q == '\t') q++;
+                char d[MAX_NAME];
+                int qi = 0;
+                while (is_alnum(*q) && qi < MAX_NAME - 1)
+                    d[qi++] = *q++;
+                d[qi] = '\0';
+                if (strcmp(d, "if") == 0 || strcmp(d, "ifdef") == 0 || strcmp(d, "ifndef") == 0)
+                    depth2++;
+                else if (depth2 == 1 && (strcmp(d, "elif") == 0 || strcmp(d, "else") == 0)) {
+                    if (found_true) {
+                        if (block_start) {
+                            int blen = (int)(p - block_start);
+                            char *blk = xmalloc(blen + 1);
+                            memcpy(blk, block_start, blen);
+                            blk[blen] = '\0';
+                            char *exp2 = preprocess_internal(blk, depth + 1);
+                            int elen2 = strlen(exp2);
+                            if (out_len + elen2 < MAX_OUTPUT) {
+                                memcpy(output + out_len, exp2, elen2);
+                                out_len += elen2;
                             }
+                            free(exp2);
+                            free(blk);
+                            block_start = NULL;
                         }
+                        skip_to_eol(&p);
+                        if (*p == '\n') p++;
+                        while (*p && depth2 > 0) {
+                            if (*p == '#') {
+                                const char *q2 = p + 1;
+                                while (*q2 == ' ' || *q2 == '\t') q2++;
+                                char d2[MAX_NAME];
+                                int qi2 = 0;
+                                while (is_alnum(*q2) && qi2 < MAX_NAME - 1)
+                                    d2[qi2++] = *q2++;
+                                d2[qi2] = '\0';
+                                if (strcmp(d2, "if") == 0 || strcmp(d2, "ifdef") == 0 || strcmp(d2, "ifndef") == 0)
+                                    depth2++;
+                                else if (strcmp(d2, "endif") == 0) {
+                                    depth2--;
+                                    if (depth2 == 0) {
+                                        p = q2;
+                                        skip_to_eol(&p);
+                                        if (*p == '\n') p++;
+                                        break;
+                                    }
+                                }
+                            }
+                            p++;
+                        }
+                        continue;
                     }
-                    p++;
+                    if (strcmp(d, "elif") == 0) {
+                        const char *eq = q;
+                        skip_whitespace(&eq);
+                        char eexpr[256];
+                        int eei = 0;
+                        while (*eq && *eq != '\n' && eei < 255) {
+                            eexpr[eei++] = *eq++;
+                        }
+                        eexpr[eei] = '\0';
+                        cond = eval_const_expr(eexpr);
+                        if (cond) {
+                            found_true = 1;
+                            block_start = q;
+                            while (*block_start && *block_start != '\n') block_start++;
+                            if (*block_start == '\n') block_start++;
+                        }
+                    } else {
+                        found_true = 1;
+                        block_start = q;
+                        while (*block_start && *block_start != '\n') block_start++;
+                        if (*block_start == '\n') block_start++;
+                    }
+                    skip_to_eol(&p);
+                    if (*p == '\n') p++;
+                    continue;
+                } else if (strcmp(d, "endif") == 0) {
+                    depth2--;
+                    if (depth2 == 0) {
+                        if (found_true && block_start) {
+                            int block_len = (int)(p - block_start);
+                            char *block = xmalloc(block_len + 1);
+                            memcpy(block, block_start, block_len);
+                            block[block_len] = '\0';
+                            char *expanded = preprocess_internal(block, depth + 1);
+                            int elen = strlen(expanded);
+                            if (out_len + elen < MAX_OUTPUT) {
+                                memcpy(output + out_len, expanded, elen);
+                                out_len += elen;
+                            }
+                            free(expanded);
+                            free(block);
+                        }
+                        p = q;
+                        skip_to_eol(&p);
+                        if (*p == '\n') p++;
+                        break;
+                    }
                 }
-            } else if (strcmp(directive, "elif") == 0 || strcmp(directive, "else") == 0) {
+            }
+            p++;
+        }
+} else if (strcmp(directive, "elif") == 0 || strcmp(directive, "else") == 0) {
                 skip_to_eol(&p);
                 if (*p == '\n') p++;
             } else if (strcmp(directive, "endif") == 0) {
@@ -645,11 +712,13 @@ static char *preprocess_internal(char *source, int depth) {
                         }
                     }
                 } else {
-                    int len = strlen(m->body);
+                    char *exp_result = preprocess_internal(m->body, depth);
+                    int len = strlen(exp_result);
                     if (out_len + len < MAX_OUTPUT) {
-                        memcpy(output + out_len, m->body, len);
+                        memcpy(output + out_len, exp_result, len);
                         out_len += len;
                     }
+                    free(exp_result);
                 }
             } else {
                 int wlen = (int)(p - start);

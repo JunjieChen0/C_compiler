@@ -1,27 +1,32 @@
 #include "lexer.h"
 
-static struct { const char *word; TokenKind kind; } keywords[] = {
-    {"auto", TK_AUTO}, {"break", TK_BREAK}, {"case", TK_CASE},
-    {"char", TK_CHAR_KW}, {"const", TK_CONST}, {"continue", TK_CONTINUE},
-    {"default", TK_DEFAULT}, {"do", TK_DO}, {"double", TK_DOUBLE},
-    {"else", TK_ELSE}, {"enum", TK_ENUM}, {"extern", TK_EXTERN},
-    {"float", TK_FLOAT_KW}, {"for", TK_FOR}, {"goto", TK_GOTO},
-    {"if", TK_IF}, {"inline", TK_INLINE}, {"int", TK_INT_KW},
-    {"long", TK_LONG_KW}, {"register", TK_REGISTER}, {"restrict", TK_RESTRICT},
-    {"return", TK_RETURN}, {"short", TK_SHORT}, {"signed", TK_SIGNED},
-    {"sizeof", TK_SIZEOF}, {"static", TK_STATIC}, {"struct", TK_STRUCT},
-    {"switch", TK_SWITCH}, {"typedef", TK_TYPEDEF}, {"union", TK_UNION},
-    {"unsigned", TK_UNSIGNED}, {"void", TK_VOID}, {"volatile", TK_VOLATILE},
-    {"while", TK_WHILE}, {"_Bool", TK_BOOL}, {"_Complex", TK_COMPLEX},
-    {"_Imaginary", TK_IMAGINARY},
-    {((void *)0), TK_EOF}
-};
-
+/* Keyword lookup using static local array (avoids global array BSS issue) */
 static TokenKind check_keyword(const char *start, int len) {
-    for (int i = 0; keywords[i].word; i++) {
-        if ((int)strlen(keywords[i].word) == len &&
-            memcmp(keywords[i].word, start, len) == 0) {
-            return keywords[i].kind;
+    static const char *words[] = {
+        "auto", "break", "case", "char", "const", "continue",
+        "default", "do", "double", "else", "enum", "extern",
+        "float", "for", "goto", "if", "inline", "int",
+        "long", "register", "restrict", "return", "short", "signed",
+        "sizeof", "static", "struct", "switch", "typedef", "union",
+        "unsigned", "void", "volatile", "while",
+        "_Bool", "_Complex", "_Imaginary",
+        ((void *)0)
+    };
+    static const TokenKind kinds[] = {
+        TK_AUTO, TK_BREAK, TK_CASE, TK_CHAR_KW, TK_CONST, TK_CONTINUE,
+        TK_DEFAULT, TK_DO, TK_DOUBLE, TK_ELSE, TK_ENUM, TK_EXTERN,
+        TK_FLOAT_KW, TK_FOR, TK_GOTO, TK_IF, TK_INLINE, TK_INT_KW,
+        TK_LONG_KW, TK_REGISTER, TK_RESTRICT, TK_RETURN, TK_SHORT, TK_SIGNED,
+        TK_SIZEOF, TK_STATIC, TK_STRUCT, TK_SWITCH, TK_TYPEDEF, TK_UNION,
+        TK_UNSIGNED, TK_VOID, TK_VOLATILE, TK_WHILE,
+        TK_BOOL, TK_COMPLEX, TK_IMAGINARY,
+        TK_EOF
+    };
+    int i;
+    for (i = 0; words[i]; i++) {
+        if ((int)strlen(words[i]) == len &&
+            memcmp(words[i], start, len) == 0) {
+            return kinds[i];
         }
     }
     return TK_IDENT;
@@ -57,10 +62,13 @@ static char escape_char(char c) {
 }
 
 void lexer_init(Lexer *l, char *source) {
-    l->start = source;
-    l->current = source;
-    l->line = 1;
-    l->token = (Token){TK_EOF, ((void *)0), 0, 0, 0, ((void *)0), 0, 1};
+    /* Use memcpy for each field to avoid cc.exe struct pointer write bug */
+    int one = 1;
+    memset(l, 0, sizeof(Lexer));
+    memcpy(&l->start, &source, sizeof(char *));
+    memcpy(&l->current, &source, sizeof(char *));
+    memcpy(&l->line, &one, sizeof(int));
+    memcpy(&l->token.line, &one, sizeof(int));
 }
 
 static void skip_whitespace(Lexer *l) {

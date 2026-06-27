@@ -90,7 +90,7 @@ typedef struct {
     uint64_t SizeOfHeapCommit;
     uint32_t LoaderFlags;
     uint32_t NumberOfRvaAndSizes;
-    uint64_t DataDirectory[16 * 2];
+    uint64_t DataDirectory[32];
 } PEOptionalHeader;
 
 typedef struct {
